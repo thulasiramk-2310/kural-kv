@@ -289,5 +289,44 @@
       "8192 (50.01%)": 0.3
     },
     "finding": "Nothing survives below half the cache, and half the cache recovers only a third of the baseline. Published budgets in this literature are single-digit percentages, where this task returns zero."
+  },
+  "selection_recall_vs_accuracy": {
+    "source_logs": [
+      "results/recall_ruler_2k.json",
+      "results/recall_ruler_16k.json",
+      "results/ruler_2k_niah_single_1.json",
+      "results/ruler_16k_niah_single_1.json",
+      "results/ruler_16k_pctmatch.json"
+    ],
+    "task": "RULER niah_single_1",
+    "policy": "snapkv",
+    "n_per_point": 20,
+    "recall_definition": "fraction of (layer, kv_head) units whose top-k retains EVERY token of the answer value",
+    "matched_budgets": [
+      {
+        "budget": 91,
+        "recall_2048": 0.163,
+        "acc_2048": 0.0,
+        "recall_16384": 0.114,
+        "acc_16384": 0.0
+      },
+      {
+        "budget": 181,
+        "recall_2048": 0.83,
+        "acc_2048": 0.8,
+        "recall_16384": 0.793,
+        "acc_16384": 0.25
+      },
+      {
+        "budget": 362,
+        "recall_2048": 0.893,
+        "acc_2048": 0.9,
+        "recall_16384": 0.856,
+        "acc_16384": 0.3
+      }
+    ],
+    "finding": "Selection recall is context-invariant while accuracy is not: at 181 entries the contexts differ by 0.037 in recall and 0.550 in accuracy. The 16K failure is downstream of selection, not a ranking failure. From 181 to 2900 entries at 16K, accuracy rises 0.25->0.80 while target recall rises only 0.79->0.91.",
+    "partial_retention_is_worthless": "At 91 entries some answer token survives in 85-89% of units but every token in 11-16%, with accuracy 0.000 at both contexts.",
+    "not_yet_measured": "Recall of the needle's KEY tokens, which the query matches on, as distinct from the value tokens measured here."
   }
 }

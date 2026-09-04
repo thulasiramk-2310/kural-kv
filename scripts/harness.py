@@ -197,6 +197,69 @@ def prefill_with_scores(model, ids, chunk, window, device):
     return cache, scores, out.logits, cache.get_seq_length()
 
 
+def find_target_positions(tok, input_ids, value):
+    """Token span(s) of the answer value inside the prompt.
+
+    Searched as a token subsequence against the exact ids that were prefilled,
+    rather than by re-tokenising decoded text, so there is no decode/encode
+    round-trip that could shift a boundary. Both the bare and space-prefixed
+    tokenisations are tried, since the value sits mid-sentence.
+    """
+    ids = input_ids[0].tolist()
+    spans = []
+    for variant in (value, " " + value):
+        c = tok(variant, add_special_tokens=False).input_ids
+        if not c:
+            continue
+        for i in range(len(ids) - len(c) + 1):
+            if ids[i:i + len(c)] == c:
+                spans.append((i, i + len(c)))
+    # De-duplicate overlapping hits from the two tokenisations.
+    spans.sort()
+    merged = []
+    for a, b in spans:
+        if merged and a < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def target_survives(scores, kv_heads, mode, budget, window, pool_kernel, spans, L):
+    """Does SnapKV's top-k retain the answer's own entries?
+
+    Applies exactly the selection `policy_snapkv` applies -- same group
+    reduction, same pooling, same forced observation window, same top-k -- and
+    asks whether the target's token positions are among the kept indices.
+
+    Separates a ranking failure from a budget failure without assuming anything
+    about attention: if the target survives selection and the answer is still
+    wrong, the failure is downstream of selection.
+    """
+    want = set()
+    for a, b in spans:
+        want.update(range(a, b))
+    if not want:
+        return None
+    any_hits, all_hits, total = 0, 0, 0
+    for layer_scores in scores:
+        sc = reduce_group(layer_scores, kv_heads, mode).clone()
+        if pool_kernel > 1:
+            sc = torch.nn.functional.max_pool1d(
+                sc.unsqueeze(0), kernel_size=pool_kernel, stride=1,
+                padding=pool_kernel // 2).squeeze(0)[:, :L]
+        sc[:, L - window:] = float("inf")
+        idx = sc.topk(min(budget, L), dim=-1).indices
+        for h in range(idx.shape[0]):
+            kept = set(idx[h].tolist())
+            hit = want & kept
+            total += 1
+            any_hits += bool(hit)
+            all_hits += (len(hit) == len(want))
+    return {"any": any_hits / total, "all": all_hits / total,
+            "target_tokens": len(want), "units": total}
+
+
 def score_concentration(scores, kv_heads, mode, fracs=(0.5, 0.9)):
     """Entries needed to cover each fraction of SnapKV's own scoring mass.
 
@@ -378,6 +441,10 @@ def main():
                          "their shared KV entry. Re-runnable against an existing "
                          "prefill cache, since scores are stored per query head")
     ap.add_argument("--pool-kernel", type=int, default=7)
+    ap.add_argument("--measure-recall", action="store_true",
+                    help="report whether the answer's own entries survive top-k "
+                         "at each budget, then skip decoding. Separates a ranking "
+                         "failure from a budget failure")
     ap.add_argument("--measure-spread", action="store_true",
                     help="report how many entries hold 50%% and 90%% of SnapKV's "
                          "scoring mass, then skip the policies. Tests the budget-"
@@ -437,7 +504,7 @@ def main():
           f"group_reduce={args.group_reduce}  "
           f"cache={'on' if args.cache_dir else 'off'}\n")
 
-    rows, spread, hits, misses = [], [], 0, 0
+    rows, spread, recall, hits, misses = [], [], [], 0, 0
     for n in range(n_samples):
         seed = args.seed + n
         sample = task.sample(n, device)
@@ -461,6 +528,33 @@ def main():
             if path is not None and not args.no_cache_write:
                 save_prefill(path, cache, scores, first_id, prompt_len, identity)
         prefill_s = time.perf_counter() - t0
+
+        if args.measure_recall:
+            kvh = model.config.num_key_value_heads
+            ref = sample["reference"]
+            value = ref[0] if isinstance(ref, (list, tuple)) else ref
+            spans = find_target_positions(tok, sample["input_ids"], str(value))
+            if not spans:
+                sprint(f"  s{n} target {value!r} NOT LOCATED in prompt; skipped")
+                del cache, scores
+                torch.cuda.empty_cache()
+                continue
+            budgets = ([max(args.window + 1, b) for b in args.budget_tokens]
+                       if args.budget_tokens
+                       else [max(args.window + 1, int(prompt_len * f))
+                             for f in args.budget_fractions])
+            for b in budgets:
+                r = target_survives(scores, kvh, args.group_reduce, b, args.window,
+                                    args.pool_kernel, spans, prompt_len)
+                recall.append({"sample": n, "budget": b, "prompt_len": prompt_len,
+                               "target_tokens": r["target_tokens"],
+                               "any_token_kept": round(r["any"], 4),
+                               "all_tokens_kept": round(r["all"], 4)})
+                sprint(f"  s{n} budget {b:>6}  target {r['target_tokens']} tok  "
+                       f"any-kept {r['any']:>6.1%}  all-kept {r['all']:>6.1%}")
+            del cache, scores
+            torch.cuda.empty_cache()
+            continue
 
         if args.measure_spread:
             kvh = model.config.num_key_value_heads
@@ -535,6 +629,34 @@ def main():
             del evicted
         del cache, scores
         torch.cuda.empty_cache()
+
+    if args.measure_recall:
+        import statistics as _st
+        print()
+        print("budget   n   any-token kept   all-tokens kept")
+        agg = {}
+        for r in recall:
+            agg.setdefault(r["budget"], []).append(r)
+        for b in sorted(agg):
+            v = agg[b]
+            print(f"{b:>6} {len(v):>3}   {_st.mean(x['any_token_kept'] for x in v):>12.1%}   "
+                  f"{_st.mean(x['all_tokens_kept'] for x in v):>14.1%}")
+        payload = {"run": {"timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                           "task": args.task, "context": args.context,
+                           "measures": "fraction of (layer, kv_head) units whose "
+                                       "SnapKV top-k retains the answer's tokens"},
+                   "config": {k: (str(v) if isinstance(v, Path) else v)
+                              for k, v in vars(args).items()},
+                   "by_budget": {str(b): {
+                       "n": len(agg[b]),
+                       "any_token_kept": round(_st.mean(x["any_token_kept"] for x in agg[b]), 4),
+                       "all_tokens_kept": round(_st.mean(x["all_tokens_kept"] for x in agg[b]), 4)}
+                       for b in sorted(agg)},
+                   "rows": recall}
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Logged to {args.out}")
+        return
 
     if args.measure_spread:
         import statistics as _st

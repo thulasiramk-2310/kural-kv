@@ -413,10 +413,54 @@ behaviour does not transfer to RULER**, which is the clearest possible argument
 for why it is a diagnostic and not a benchmark: it was giving a clean, stable,
 reproducible answer to a question, and the answer was specific to itself.
 
-The mechanism remains unexplained. The next measurement that does not depend on
-any hypothesis about attention is whether the target's own entries survive
-selection at each context: that distinguishes a ranking failure from a budget
-failure directly.
+### The failure is downstream of selection
+
+That measurement has now been made, and it depends on no hypothesis about
+attention. `--measure-recall` applies exactly the selection `policy_snapkv`
+applies -- same group reduction, same pooling, same forced window, same top-k --
+and asks whether the answer's own token positions are among the kept indices. The
+target is located by token-subsequence search against the ids that were actually
+prefilled, so no decode/encode round trip can shift a boundary.
+
+RULER `niah_single_1`, SnapKV, n=20. Selection recall is the fraction of
+(layer, KV head) units retaining *every* token of the answer:
+
+| budget | 2048 recall | 2048 accuracy | 16384 recall | 16384 accuracy |
+|---|---|---|---|---|
+| 91 | 0.163 | 0.000 | 0.114 | 0.000 |
+| 181 | 0.830 | 0.800 | 0.793 | 0.250 |
+| 362 | 0.893 | 0.900 | 0.856 | 0.300 |
+| 1024 | — | — | 0.885 | 0.550 |
+| 2900 | — | — | 0.914 | 0.800 |
+
+**Selection recall is context-invariant; accuracy is not.** At 181 entries the two
+contexts differ by 0.037 in recall and 0.550 in accuracy; at 362, by 0.037 and
+0.600. SnapKV retains the target at essentially the same rate at both context
+lengths, and the model can only use it at the shorter one.
+
+So the 16K failure is not a ranking failure and not a failure to retain the
+answer. It is downstream of selection. Note also that at 16384 the accuracy climb
+from 0.250 to 0.800 between 181 and 2900 entries is accompanied by a recall climb
+of only 0.793 to 0.914: the additional 2,700 entries buy 0.55 of accuracy while
+buying 0.12 of target retention. Whatever those entries provide, it is mostly not
+the answer's own keys.
+
+Retaining a fact is therefore not sufficient for using it, and a budget's effect
+at long context is not principally about whether the target survives. Any account
+of eviction damage that reasons only about whether important tokens are kept is
+incomplete.
+
+**Partial retention is worthless.** At 91 entries, some token of the answer
+survives in 85-89% of units while every token survives in 11-16%, and accuracy is
+0.000 at both contexts. The distinction between "any" and "all" is the whole
+signal; a recall metric that counted partial hits would have reported 87% success
+at a budget that retrieves nothing.
+
+One measurement not yet made, stated so it is not mistaken for settled: this
+locates the answer's *value* tokens. The needle also carries a *key*, which is
+what the query matches on. If keys are evicted while values survive, the model
+would retain the answer without being able to bind it to the question, which
+would be a mechanism consistent with everything above.
 
 The grid remains absolute — 32, 45, 64, 91, 128, 181, 256, 362, 512, 1024 — with
 percentage-matched points added when contexts are compared, since neither axis
