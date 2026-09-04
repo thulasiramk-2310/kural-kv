@@ -149,12 +149,43 @@ rather than writing a row.
 Related: probes use real text. Random token ids cannot distinguish a working
 model from a broken one, which is precisely how this defect stayed hidden.
 
+## Prefill cost
+
+Measured on the primary arm, bf16, `prefill_chunk=512`, warm weights, one
+discarded warmup iteration and three timed repeats per length
+(`scripts/prefill_timing.py`, `results/prefill_timing.json`):
+
+| context | median | ratio vs previous | local exponent | peak GiB |
+|---|---|---|---|---|
+| 1024 | 0.220s | — | — | 2.98 |
+| 2048 | 0.518s | 2.36x | 1.24 | 3.08 |
+| 4096 | 1.343s | 2.59x | 1.37 | 3.27 |
+| 8192 | 3.899s | 2.90x | 1.54 | 3.64 |
+
+Overall log-log fit is **1.38**, but the local exponent rises monotonically with
+context — 1.24, 1.37, 1.54 — which is the expected signature of quadratic
+attention overtaking the linear per-token work as the sequence grows. Prefill is
+heading toward quadratic without having reached it in the measured range.
+
+Repeat spread is under 2.5% and resident allocation between repeats is flat to
+0.008 GiB, so these are prefill cost and not allocator behaviour. The first
+iteration at 1024 runs 5.6x slower than the rest, which is why a warmup
+iteration is discarded rather than averaged in.
+
+**This supersedes the prefill timings in the gate-check log.** Those were taken
+while the same run was downloading weights, and the 49.3s recorded at 16K
+implied a 13x jump from 8K. Measured 4K to 8K is 2.90x, and the trend puts 16K
+an order of magnitude below that recorded figure. The gate-check timings should
+not be used for planning.
+
 ## Planned: prefill caching
 
 One prefill per (model, context, sample) serves every method and every budget,
 because prefill produces the full KV cache and each policy then reduces that same
 cache. A 25-configuration sweep collapses to one prefill pass plus 25 cheap
-decodes. At 0.44 GiB per 16K sample, 100 samples is ~44 GB — affordable against
+decodes — roughly a 25x saving on the prefill component. At the measured 3.9s per
+8K prefill this is worth having, but it is not the difference between days and
+weeks that the contaminated gate-check timings implied. At 0.44 GiB per 16K sample, 100 samples is ~44 GB — affordable against
 200 GB if deleted per task. Cache K and V as stored; never cache attentions,
 which are recomputable and enormous.
 
