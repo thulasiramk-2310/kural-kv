@@ -104,6 +104,56 @@ sits between the linear and quadratic terms and creeps toward 2 as the attention
 term comes to dominate. A measured 1.75 across 8K→16K should be expected to rise
 further above 16K, and must not be treated as a converged value.
 
+## Intra-group aggregation
+
+On MHA there is one index per head and each query head owns its KV outright. On
+GQA a KV entry is shared by every query head in its group, so an eviction score
+must be formed from several query heads' preferences, and those heads may
+disagree. The reference implementations never faced this because the group size
+was 1.
+
+Two consequences run through the code. Selection is per KV head, which requires a
+`gather` rather than an `index_select`, because no single per-sequence index
+serves all heads. And the per-query-head scores must be collapsed onto their
+shared entry by an explicit rule:
+
+- **`sum` (default).** Total attention mass the group directs at the entry. An
+  entry that matters a little to all six heads outranks one that matters greatly
+  to a single head, which matches the fact that evicting it harms all six.
+- **`max`.** Retain the entry if any head in the group needs it. Protects
+  minority heads, at the cost of spending budget on entries most of the group
+  ignores.
+- **`mean`.** For uniform group sizes this is `sum` divided by a constant, a
+  monotone transform that leaves the top-k ranking unchanged. Verified
+  empirically: `mean` and `sum` produce bit-identical generations. It is retained
+  only for comparability across models whose group sizes differ, and is not an
+  independent alternative.
+
+This is a design decision, not a detail, and it has no correct answer inherited
+from the literature. Observation-window scores are therefore cached **per query
+head**, shape `[q_heads, L]`, and the reduction is applied at policy time. That
+costs roughly 5% more sidecar at 16K and makes the aggregation an ablation that
+re-runs against existing prefill caches instead of forcing a re-prefill.
+
+The choice is measurable: at 2048 context and 3% budget, `sum` and `max` retain
+different entries and produce different generations from the same cache. Whether
+intra-group disagreement costs accuracy is an open measurement, and it is the
+part of this study with no counterpart in the MHA results being reproduced.
+
+## Prefill cache equivalence
+
+The harness reads a prefill from disk when one exists for the exact identity
+`(model, dtype, context, window, prefill_chunk, seed)`, and rejects a cache built
+under any other configuration rather than silently reusing it.
+
+Equivalence is verified through the harness itself, not only at the tensor level:
+the same samples run live and then from cache must produce identical rows. The
+check compares generated text as well as grades, because matching only on
+correctness would pass while the underlying generations differed. At 2048 context
+and 3% budget the two runs agree on every field, including the incorrect answers
+— `60941`, `84608`, `1731` — which are the more sensitive comparison, since a
+hallucinated code depends on precisely which keys survived eviction.
+
 ## Context range
 
 **The primary arm is capped at 16K. This is a methods decision, not a memory
