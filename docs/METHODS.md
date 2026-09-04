@@ -84,6 +84,26 @@ clears it reliably (six of six across in-process repeats and cold processes) at
 3.65 GiB peak. The chunk is held fixed across every context length so that
 measured curves reflect context scaling rather than chunk-size effects.
 
+## Reading a scaling exponent
+
+Prefill cost is fitted as log(time) against log(context), and **the exponent
+quoted is the local one at the top of the measured range, not the global fit.**
+
+A global log-log fit over a range whose low end is dominated by fixed per-chunk
+overhead is dragged toward linear regardless of how the attention term is
+growing, and the smaller the chunk the stronger that pull. This is not a
+hypothetical: the first version of `scripts/prefill_timing.py` keyed its verdict
+off the global fit and reported "near-linear" for a curve whose top-of-range
+exponent was 1.75 — a wrong methodological conclusion, arrived at from correct
+measurements. Any scaling claim in this repository is read from the top of the
+range, with the global fit reported for reference only.
+
+The exponent at the top of the range is also not a ceiling. Attention is only
+part of prefill: the MLP and the projections are linear in context, so the total
+sits between the linear and quadratic terms and creeps toward 2 as the attention
+term comes to dominate. A measured 1.75 across 8K→16K should be expected to rise
+further above 16K, and must not be treated as a converged value.
+
 ## Context range
 
 **The primary arm is capped at 16K. This is a methods decision, not a memory
