@@ -166,10 +166,22 @@ the entry was evicted before saving, cache length and logical position differ,
 and defaulting to cache length reintroduces the RoPE desynchronisation from a
 different direction. The logical position is therefore persisted in the sidecar.
 Verified: at 2048 tokens with half the cache evicted, resuming at the correct
-position 2048 reproduces the live continuation exactly, while resuming at the
-cache length 1024 produces `"the first programmable electronic computer. Charles
-Babbage designed the the the the the the the the the"` — fluent for a clause,
-then collapsing, with no error raised.
+position reproduces the live continuation exactly, while resuming at the cache
+length does not. Both continuations, verbatim, from the same cache and the same
+first token:
+
+    correct position (2048):  " Bletchley Park drove the construction of Colossus, the first programmable electronic computer."
+    naive position   (1024):  " the first programmable electronic computer. Charles Babbage designed the the the the the the the the the"
+
+No error is raised in either case. The second is fluent for a clause before
+collapsing into repetition, which is what makes this class of bug expensive: it
+looks like a working system for long enough to be mistaken for eviction damage.
+
+Note also what the un-evicted case does. Without eviction, cache length and
+logical position coincide, the naive resume matches exactly, and the test
+certifies the persisted position as unnecessary — immediately before a harness
+begins saving post-eviction states under a guarantee that was never exercised.
+Both paths are therefore checked.
 
 ## Measurement
 
