@@ -1,0 +1,17 @@
+# Weights, datasets, caches
+models/
+data/
+*.safetensors
+*.gguf
+__pycache__/
+*.pyc
+
+# Agent tooling: never committed.
+CLAUDE.md
+.claudeignore
+
+# Run logs are large and machine-specific; only the headline numbers are tracked.
+# Note: "results/*" not "results/" -- git cannot re-include a file whose parent
+# directory is excluded, so the negation below would silently do nothing.
+results/*
+!results/summary.json
