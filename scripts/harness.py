@@ -369,6 +369,139 @@ def load_prefill(path, device, identity):
 # --------------------------------------------------------------------------
 # Policies. Each returns a NEW cache; none mutates its input.
 # --------------------------------------------------------------------------
+def install_head_mask_attention(model):
+    """Register an eager attention that honours a per-layer, per-head key mask.
+
+    Ada-KV gives different KV heads different numbers of entries. A dense cache
+    stores one sequence length for every head, so the shorter heads must be
+    padded -- and the padding has to be excluded from attention or it is not
+    Ada-KV, it is SnapKV at the larger budget.
+
+    The model's own mask cannot express this. It builds one causal mask per
+    attention *type*, shared by every layer, so it can carry neither a per-layer
+    nor a per-head pattern. The mask therefore travels on the attention module
+    itself, set by the policy and read here.
+
+    Registered once, and inert unless a module carries `_head_mask`, so every
+    other policy is unaffected.
+    """
+    from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+    from transformers.models.qwen2.modeling_qwen2 import repeat_kv
+
+    def eager_head_masked(module, query, key, value, attention_mask,
+                          scaling=None, dropout=0.0, **kwargs):
+        key_states = repeat_kv(key, module.num_key_value_groups)
+        value_states = repeat_kv(value, module.num_key_value_groups)
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
+        hm = getattr(module, "_head_mask", None)
+        if hm is not None:
+            # hm is [kv_heads, L] with True on padded slots; expand to the query
+            # heads that share each KV head. Decoding appends a token to the
+            # cache each step, and those are real entries, so the mask is
+            # extended with False rather than resized.
+            kvh, L = hm.shape
+            grown = attn_weights.shape[-1] - L
+            if grown > 0:
+                hm = torch.cat([hm, torch.zeros(kvh, grown, dtype=torch.bool,
+                                                device=hm.device)], dim=1)
+                L = hm.shape[1]
+            m = hm.repeat_interleave(module.num_key_value_groups, dim=0)
+            attn_weights = attn_weights.masked_fill(
+                m.view(1, kvh * module.num_key_value_groups, 1, L),
+                torch.finfo(attn_weights.dtype).min)
+        attn_weights = torch.nn.functional.softmax(
+            attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
+        return attn_output.transpose(1, 2).contiguous(), attn_weights
+
+    ALL_ATTENTION_FUNCTIONS.register("eager_head_masked", eager_head_masked)
+    model.config._attn_implementation = "eager_head_masked"
+    return model
+
+
+def clear_head_masks(model):
+    for layer in model.model.layers:
+        if hasattr(layer.self_attn, "_head_mask"):
+            del layer.self_attn._head_mask
+
+
+def adakv_allocation(scores_layer, kv_heads, mode, budget, window, pool_kernel, L):
+    """Ada-KV: pool scores across heads and take one global top-k.
+
+    SnapKV gives every head the same count. Ada-KV pools the heads' scores within
+    a layer and selects globally, so a head holding more of the attention mass
+    receives more entries and a flat head receives fewer. The total is the same
+    `budget * kv_heads`, which is what makes it a reallocation rather than a
+    budget increase.
+
+    On this model that pooling is across two KV groups rather than the twelve
+    query heads the paper assumes -- the mechanism has two dials here.
+
+    Returns per-head sorted index tensors, which may differ in length.
+    """
+    sc = reduce_group(scores_layer, kv_heads, mode).clone()
+    if pool_kernel > 1:
+        sc = torch.nn.functional.max_pool1d(
+            sc.unsqueeze(0), kernel_size=pool_kernel, stride=1,
+            padding=pool_kernel // 2).squeeze(0)[:, :L]
+    sc[:, L - window:] = float("inf")       # window is mandatory for every head
+    total = min(budget * kv_heads, kv_heads * L)
+    flat = sc.reshape(-1)
+    chosen = flat.topk(total).indices
+    heads = chosen // L
+    pos = chosen % L
+    out = []
+    for h in range(kv_heads):
+        idx = pos[heads == h]
+        if idx.numel() == 0:                 # never leave a head empty
+            idx = torch.arange(L - 1, L, device=sc.device)
+        out.append(idx.sort().values)
+    return out
+
+
+def policy_adakv(cache, ctx):
+    """Ada-KV with masked dense storage.
+
+    Heads receive different counts, the tensor is sized to the largest, and the
+    padded slots are masked out of attention so they contribute nothing. That
+    keeps the semantics exact at the cost of storing more than is allocated --
+    a dense-storage penalty, not a property of the method; paged attention holds
+    ragged lengths natively and pays none of it.
+    """
+    new = DynamicCache()
+    masks, allocated, stored = [], 0, 0
+    for i, layer in enumerate(cache.layers):
+        k, v = layer.keys, layer.values
+        _, kv_heads, L, D = k.shape
+        if ctx["budget"] >= L:
+            new.update(k.clone(), v.clone(), i)
+            masks.append(None)
+            allocated += kv_heads * L
+            stored += kv_heads * L
+            continue
+        idxs = adakv_allocation(ctx["scores"][i], kv_heads, ctx["group_reduce"],
+                                ctx["budget"], ctx["window"], ctx["pool_kernel"], L)
+        width = max(int(t.numel()) for t in idxs)
+        gather = torch.zeros(kv_heads, width, dtype=torch.long, device=k.device)
+        pad = torch.zeros(kv_heads, width, dtype=torch.bool, device=k.device)
+        for h, t in enumerate(idxs):
+            gather[h, :t.numel()] = t
+            if t.numel() < width:
+                gather[h, t.numel():] = t[-1]      # slot content is irrelevant,
+                pad[h, t.numel():] = True          # it is masked out of attention
+            allocated += int(t.numel())
+        stored += kv_heads * width
+        g = gather.unsqueeze(0).unsqueeze(-1).expand(1, kv_heads, width, D)
+        new.update(k.gather(2, g).contiguous(), v.gather(2, g).contiguous(), i)
+        masks.append(pad)
+    ctx["_adakv_masks"] = masks
+    ctx["_adakv_allocated"] = allocated
+    ctx["_adakv_stored"] = stored
+    return new
+
+
 def pyramid_budgets(num_layers, budget, window, beta=20):
     """Per-layer budgets for PyramidKV, summing to `num_layers * budget`.
 
@@ -485,7 +618,7 @@ def policy_snapkv(cache, ctx):
 
 
 POLICIES = {"full": policy_full, "snapkv": policy_snapkv,
-            "pyramidkv": policy_pyramid}
+            "pyramidkv": policy_pyramid, "adakv": policy_adakv}
 
 
 # --------------------------------------------------------------------------
@@ -554,6 +687,8 @@ def main():
         attn_implementation="eager", device_map={"": 0}).eval()
     device = next(model.parameters()).device
     assert device.type == "cuda"
+    if "adakv" in args.policies:
+        install_head_mask_attention(model)
     stop_ids = {i for i in (tok.eos_token_id,
                             tok.convert_tokens_to_ids("<|im_end|>"),
                             tok.convert_tokens_to_ids("<|endoftext|>"))
@@ -691,8 +826,17 @@ def main():
                 # Total entries is also the axis methods are compared on.
                 kept_total = sum(l.keys.shape[2] for l in evicted.layers)
                 kept = kept_total // len(evicted.layers)
+                if name == "adakv":
+                    for lyr, m in zip(model.model.layers, ctx["_adakv_masks"]):
+                        if m is None:
+                            if hasattr(lyr.self_attn, "_head_mask"):
+                                del lyr.self_attn._head_mask
+                        else:
+                            lyr.self_attn._head_mask = m
                 produced, _ = decode(model, evicted, first, decode_tokens,
                                      device, start_position=next_pos)
+                if name == "adakv":
+                    clear_head_masks(model)
             torch.cuda.synchronize()
             total_s = time.perf_counter() - t1
 
@@ -712,6 +856,10 @@ def main():
                 "prefill_source": source, "prefill_seconds": round(prefill_s, 4),
                 "prompt_len": prompt_len, "kept": kept,
                 "kept_total": kept_total, "n_layers": len(evicted.layers),
+                # For an unequal allocator these differ: a dense cache stores
+                # max(n_h) per head while the method allocates sum(n_h).
+                "allocated_total": ctx.get("_adakv_allocated", kept_total),
+                "stored_total": ctx.get("_adakv_stored", kept_total),
                 "kept_fraction": round(kept / prompt_len, 4),
                 "selection_seconds": round(select_s, 4),   # latency includes selection
                 "total_seconds": round(total_s, 4),
