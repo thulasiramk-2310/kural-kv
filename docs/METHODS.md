@@ -119,6 +119,58 @@ confound would land precisely on the most interesting budget point.
 comparison stays fair. 32K measurements belong to the Llama arm, whose ceiling
 is 131072 and which therefore has real margin.
 
+## Prefill caching and which methods it may serve
+
+Prefill is attention-bound at the top of the studied range, so the full
+post-prefill state is cached once per (model, context, sample) and reused across
+every method and budget rather than recomputed.
+
+A cache entry is `(K, V, prompt_score_accumulator, Q_window)`. The two sidecar
+tensors are what let a cached entry serve scoring methods: the accumulated
+attention over the prompt is a pure function of prefill, as are the
+observation-window queries. Together they add about 3.4% to the cache size at
+16K, which is not a reason to omit them.
+
+**The boundary that decides eligibility is not prompt-versus-decode scoring. It
+is whether a method evicts during prefill.**
+
+- A method that applies its budget *after* prefill can always be served from a
+  cached full prefill. Its scoring inputs are prefill outputs, whether it reads
+  the prompt tail (SnapKV) or an accumulator over the whole prompt (H2O's prompt
+  phase). H2O's decode-phase accumulation stays live, but decoding is live in
+  every design, so nothing is lost.
+- A method that evicts *during* prefill — any streaming variant that bounds its
+  own peak memory as it goes — never observes the full cache. Feeding it a cached
+  full prefill silently benchmarks a different algorithm. Such a method must run
+  live prefill, and no sidecar changes that.
+
+Every method added to the study is classified against this boundary before it is
+run from the cache. The distinction is easy to miss precisely because running the
+wrong one from a cache produces plausible output rather than an error.
+
+### Cache round trip is verified, not assumed
+
+`scripts/cache_roundtrip_check.py` checks the round trip end to end across two
+separate processes, because a same-process comparison can share state that hides
+the failure. It asserts a bitwise field-by-field fingerprint of the reconstructed
+cache and exact equality of decoded token ids against a live prefill.
+
+The check is end-to-end rather than tensor-level because the three failure modes
+that matter all survive a tensor comparison: non-contiguous tensors whose backing
+storage serialises differently than intended, an incompletely reconstructed
+`Cache` object that still runs while missing per-layer state, and — the one that
+actually bites — the logical position on resume.
+
+A loaded cache has no memory of what position the next token should claim. When
+the entry was evicted before saving, cache length and logical position differ,
+and defaulting to cache length reintroduces the RoPE desynchronisation from a
+different direction. The logical position is therefore persisted in the sidecar.
+Verified: at 2048 tokens with half the cache evicted, resuming at the correct
+position 2048 reproduces the live continuation exactly, while resuming at the
+cache length 1024 produces `"the first programmable electronic computer. Charles
+Babbage designed the the the the the the the the the"` — fluent for a clause,
+then collapsing, with no error raised.
+
 ## Measurement
 
 - Each model is compared only against its own full-cache baseline, never against
