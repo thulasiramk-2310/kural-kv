@@ -275,120 +275,52 @@ approximately RULER's single-needle case. Reported generation-quality numbers
 come from LongBench, whose metrics are F1 and ROUGE rather than exact match.
 Neither is wired up yet.
 
-## The budget axis is absolute, not fractional
+## The budget axis is task-dependent
 
-Budgets are specified as an absolute count of retained KV entries. This is not
-the convention in the literature, which reports percentage budgets, and the
-departure is deliberate.
+Budgets are specified as an absolute count of retained KV entries, but **which
+axis a result should be read on depends on the task, and this was established
+only after an earlier conclusion here proved wrong.**
 
-Measured on the synthetic needle task, 8 samples per point, SnapKV on
-Qwen2.5-1.5B: contexts of 2048 and 16384 transition at the *same absolute
-budgets* — 0.00 accuracy at 45 retained entries, 1.00 at 181 — despite an
-eightfold difference in context length. Expressed as fractions those same
-thresholds are 2.20%–8.84% of context at 2K and 0.27%–1.10% at 16K, a shift that
-exactly tracks the context ratio.
+On the *synthetic needle diagnostic*, retrieval tracked the absolute retained
+count and was essentially independent of context length: contexts of 2048 and
+16384 transitioned at the same absolute budgets, 0.00 at 45 entries and 1.00 at
+181, despite an eightfold difference in context. That was recorded here as a
+general result about retrieval. It is not one.
 
-The consequence is that a percentage budget is not comparable across context
-lengths: 3% of a 2K context fails this task outright while 3% of a 16K context
-saturates it, because the first retains 61 entries and the second 512. A
-percentage grid tuned at one context length will saturate at another.
+On **RULER `niah_single_1`, the reported benchmark, it does not replicate.**
+Same model, same policy, n=20, relative to each context's own full-cache
+baseline:
 
-**Scope of this result.** It is established for *retrieval*, on a synthetic
-needle task, with SnapKV, on one model. Retrieval plausibly depends on absolute
-count for a mechanical reason: the needle occupies a fixed number of entries
-however much filler surrounds it, so the budget either retains those entries or
-does not. Generation quality has no such argument and may well scale with
-proportion. The claim is not generalised to eviction as a whole until a
-generation-quality benchmark says so. If retrieval turns out to be absolute and
-generation proportional, that contrast is a stronger result than either alone.
+| matched on | 2048 | 16384 | gap |
+|---|---|---|---|
+| 181 entries | 0.80 | 0.28 | +0.52 |
+| 362 entries | 0.90 | 0.33 | +0.57 |
+| 8.86% of context | 0.80 | 0.72 | +0.08 |
+| 17.70% of context | 0.90 | 0.89 | +0.01 |
 
-Grid in use: 32, 45, 64, 91, 128, 181, 256, 362, 512, 1024 retained entries,
-log-spaced with resolution concentrated in the transition. (n=8; the two matched
-points that disagree across contexts differ by a single sample.)
+Matched on absolute entries the two contexts disagree by more than half the
+score. Matched on percentage they agree to within 0.08, and at the larger budget
+to within 0.01. On RULER the proportional axis is approximately correct and the
+absolute axis is badly wrong — the opposite of the diagnostic task.
 
-## Benchmarks
+The likely mechanism is that the synthetic needle names a city that occurs
+nowhere else in the prompt, so the query localises onto one entry and a fixed
+number of entries suffices however much filler surrounds it. RULER's key is an
+adjective-noun pair against a homogeneous haystack, with the phrase "special
+magic numbers" recurring in the instruction, so the relevant attention mass is
+spread and a fixed absolute budget captures a smaller share of it as context
+grows. That explanation is untested and is offered as a hypothesis, not a result.
 
-**RULER is the reported retrieval benchmark.** It is generated from a config
-rather than downloaded, so the document scarcity that constrains a cross-context
-comparison on LongBench does not arise: any number of samples can be produced at
-any context length, and every sample saturates the context exactly. The needle
-string, prompt template, answer prefix, depth schedule and `string_match_all`
-metric are taken from the RULER sources and pinned under `configs/ruler/`.
+Two things follow. **No general claim is made about which axis is correct.** It
+is a property of the task, and any result quoting a budget must say which axis it
+was measured on and at what context length. And **the synthetic needle's
+behaviour does not transfer to RULER**, which is the clearest possible argument
+for why it is a diagnostic and not a benchmark: it was giving a clean, stable,
+reproducible answer to a question, and the answer was specific to itself.
 
-Implemented variants are those whose haystack needs no external corpus:
-`niah_single_1` (noise haystack), `niah_multikey_2` and `niah_multikey_3`
-(haystack composed of distractor needles). The `essay` variants additionally
-require the Paul Graham corpus and an NLTK tokeniser; requesting one raises
-rather than silently substituting a different haystack.
-
-The distractor-haystack variants matter because they close a loophole the
-synthetic diagnostic leaves open. When filler is repeated noise, a needle is
-lexically distinctive and a scoring policy can succeed by noticing that. When the
-filler is itself made of needles differing only in key and value, it cannot.
-
-**The synthetic needle remains a diagnostic only**, for the reasons recorded
-below. **LongBench is reported as a negative result**, not run as a sweep.
-
-## Screening a task before running a sweep
-
-A benchmark is only useful for an eviction study if its score actually moves when
-the cache is evicted. That is a property of the (task, model) pair, not of the
-task, and it is measured before any sweep is run: score the full cache against
-near-total eviction, and express the gap in units of the per-sample standard
-deviation. A task whose entire eviction effect is a fraction of one standard
-deviation cannot resolve differences *within* that effect at any sample count.
-
-Screened on Qwen2.5-1.5B, bf16, SnapKV, harsh budget of 33 retained entries
-(the observation window alone), documents filtered to at least 16384 natural
-tokens (`results/task_screening.json`):
-
-| task | n | full | evicted | range | sd | answer unchanged |
-|---|---|---|---|---|---|---|
-| qasper | 3 | 0.106 | 0.032 | +0.075 | 0.70 | 33% |
-| musique | 20 | 0.194 | 0.081 | +0.113 | 0.36 | 30% |
-| hotpotqa | 66 | 0.321 | 0.237 | +0.085 | 0.21 | 38% |
-| narrativeqa | 20 | 0.127 | 0.128 | -0.002 | -0.01 | 10% |
-| 2wikimqa | 5 | 0.000 | 0.000 | 0.000 | 0.00 | 40% |
-| multifieldqa_en | 1 | 0.000 | 0.000 | 0.000 | 0.00 | 0% |
-
-None of these clears one standard deviation, and narrativeqa scores *identically*
-with 33 retained entries as with a full 16K cache. The `answer unchanged` column
-explains why: with the whole context evicted, 30–40% of answers are byte-identical
-to the full-cache answer, because the model is responding from parametric
-knowledge rather than from the retrieved context. Eviction cannot damage what the
-model was not using.
-
-Two consequences are recorded here rather than discovered later:
-
-**LongBench QA on a 1.5B model has too little dynamic range to measure eviction.**
-The largest usable effect is musique at 0.36 sd. Resolving a difference that is
-itself a fraction of that effect would need sample counts in the thousands, which
-no available task supplies — hotpotqa has 66 qualifying documents, musique 155.
-This is a limitation of the model scale the hardware permits, not of the
-methodology, and it is why the retrieval arm carries the study's findings.
-
-**The long-document filter is itself a constraint on task choice.** Requiring
-documents of at least 16384 natural tokens, which a controlled cross-context
-comparison demands, leaves multifieldqa_en with 1 qualifying document and
-2wikimqa with 5. Only musique, narrativeqa and hotpotqa survive it.
-
-The synthetic needle task, by contrast, spans the full range from 1.00 to 0.00,
-because a random five-digit code cannot be answered from priors. That property is
-what makes it a usable diagnostic, and it is also why it is not a benchmark: the
-same unguessability that gives it range makes it unlike the tasks anyone reports.
-
-## Comparing across context lengths on LongBench
-
-LongBench prompts vary widely in natural length, so setting a context length does
-not set the prompt length. At `--context 16384`, multifieldqa_en's median prompt
-is 7,773 tokens and only 0% of its documents reach 16K; hotpotqa's median is
-15,557 with 48% reaching it. Running "2048 versus 16384" without a filter would
-therefore compare 2048 against a per-sample mixture averaging well under 16384,
-confounding context length with document length while appearing to be controlled.
-
-`--min-natural-tokens` keeps only documents whose untruncated prompt is at least
-as long as the largest context under comparison, so every sample saturates every
-context length and the comparison is paired on identical documents.
+The grid remains absolute — 32, 45, 64, 91, 128, 181, 256, 362, 512, 1024 — with
+percentage-matched points added when contexts are compared, since neither axis
+can be assumed.
 
 ## Measurement
 

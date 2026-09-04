@@ -202,6 +202,50 @@
       512,
       1024
     ],
-    "grid_rationale": "Absolute entries, log-spaced, with resolution concentrated in the 45-181 transition and two saturated points above it."
+    "grid_rationale": "Absolute entries, log-spaced, with resolution concentrated in the 45-181 transition and two saturated points above it.",
+    "SUPERSEDED": "The 'percentage budgets are not comparable across context lengths' conclusion below was drawn from the synthetic needle diagnostic and does NOT replicate on RULER niah_single_1. See budget_axis_ruler."
+  },
+  "budget_axis_ruler": {
+    "source_logs": [
+      "results/ruler_2k_niah_single_1.json",
+      "results/ruler_16k_niah_single_1.json",
+      "results/ruler_16k_pctmatch.json"
+    ],
+    "task": "RULER niah_single_1 (reported benchmark)",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "dtype": "bf16",
+    "policy": "snapkv",
+    "n_per_point": 20,
+    "baseline_2048": 1.0,
+    "baseline_16384": 0.9,
+    "matched_absolute": [
+      {
+        "kept": 181,
+        "rel_2048": 0.8,
+        "rel_16384": 0.28,
+        "gap": 0.52
+      },
+      {
+        "kept": 362,
+        "rel_2048": 0.9,
+        "rel_16384": 0.33,
+        "gap": 0.57
+      }
+    ],
+    "matched_percentage": [
+      {
+        "pct": 0.0886,
+        "rel_2048": 0.8,
+        "rel_16384": 0.72,
+        "gap": 0.08
+      },
+      {
+        "pct": 0.177,
+        "rel_2048": 0.9,
+        "rel_16384": 0.89,
+        "gap": 0.01
+      }
+    ],
+    "finding": "On RULER the proportional axis is approximately correct and the absolute axis is badly wrong, the opposite of the synthetic diagnostic. The correct budget axis is a property of the task, so no general claim is made; every quoted budget must state its axis and context length."
   }
 }

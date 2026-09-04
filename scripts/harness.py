@@ -122,6 +122,19 @@ def truncate_at_stop(tokens, stop_ids):
     return tokens
 
 
+def sprint(line):
+    """Print, surviving a console that cannot encode the model's output.
+
+    A Windows cp1252 stdout raises UnicodeEncodeError on generated text
+    containing non-Latin-1 characters. That killed a 16K sweep after three
+    samples, which is an expensive way to lose a run to a print statement.
+    """
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode("ascii", "backslashreplace").decode("ascii"))
+
+
 def pctiles(xs):
     """Median with p10/p90.
 
@@ -473,9 +486,9 @@ def main():
                 "score": round(score, 4), "correct": score >= 1.0,
                 "expected": sample["reference"], "generated": text.strip()[:160],
             })
-            print(f"  s{n} {name:<7}{blabel:>7} [{source:>5}] kept {kept:>6}"
-                  f" ({kept/prompt_len:>6.2%})  "
-                  f"{score:>5.2f}  {text.strip()[:34]!r}")
+            sprint(f"  s{n} {name:<7}{blabel:>7} [{source:>5}] kept {kept:>6}"
+                   f" ({kept/prompt_len:>6.2%})  "
+                   f"{score:>5.2f}  {text.strip()[:34]!r}")
             del evicted
         del cache, scores
         torch.cuda.empty_cache()
