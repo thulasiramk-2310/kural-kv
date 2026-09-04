@@ -84,6 +84,26 @@ clears it reliably (six of six across in-process repeats and cold processes) at
 3.65 GiB peak. The chunk is held fixed across every context length so that
 measured curves reflect context scaling rather than chunk-size effects.
 
+## One causal mask for every layer
+
+A method that gives different layers different cache lengths cannot be run on
+`transformers` v5 without working around the mask. The model builds the causal
+mask **once per attention type** and shares it across every layer of that type,
+sizing it from `get_seq_length()`, which reports layer 0. PyramidKV tapers budget
+with depth, so layer 0 is its longest layer and every shorter layer fails a shape
+check inside eager attention.
+
+Passing `attention_mask=None` does not avoid this: the model then constructs the
+same single-length mask itself. The route through is that the model accepts a
+pre-built mask *mapping* and skips construction entirely when given one, and
+eager attention skips the mask addition when the mask is `None`. For single-token
+decoding nothing needs masking anyway -- the new token follows everything cached
+-- so a ragged cache is decoded with an explicitly empty mapping and each layer
+uses its own length.
+
+Recorded because it is invisible until it fails and is not something the papers
+mention. Anyone reproducing a layer-varying budget method on this stack meets it.
+
 ## Reading a scaling exponent
 
 Prefill cost is fitted as log(time) against log(context), and **the exponent
@@ -142,7 +162,8 @@ the answer.
 
 SnapKV selects a single budget applied per KV head. PyramidKV allocates across
 layers on a schedule, so its budget is per layer and its floor is a per-layer
-floor whose total depends on that schedule. Ada-KV allocates across heads, which
+floor whose total depends on that schedule. Its per-layer lengths are uniform
+across heads, so allocated and stored entries coincide for it. Ada-KV allocates across heads, which
 on this model means across two KV groups rather than the twelve query heads its
 paper assumes. Giving each method "budget B" means three different totals and
 three different memory footprints, and the comparison would then be measuring
@@ -151,6 +172,40 @@ allocation arithmetic rather than policy quality.
 Total retained entries is the axis because it is what the study's headline metric
 is about: memory. Two methods retaining the same number of entries occupy the
 same cache, whatever internal distribution produced it.
+
+### Allocated entries versus stored entries
+
+That rule was written before Ada-KV was implemented, and it does not disambiguate
+on its own. **For a method that allocates unequally across heads, the entries it
+allocates and the entries it stores are different numbers.**
+
+A dense KV cache holds `[1, kv_heads, L, D]` -- one sequence length shared by
+every head. Ada-KV's mechanism is giving heads different counts, so with
+`n1 + n2 = 2B` and `n1 != n2` the tensor must be sized `max(n1, n2)` for both:
+
+| split | allocated | dense stored | overhead |
+|---|---|---|---|
+| 181 / 181 | 362 | 362 | 1.00x |
+| 250 / 112 | 362 | 500 | 1.38x |
+| 330 / 32 | 362 | 660 | 1.82x |
+
+The method's own strength is what costs it: the harder it reallocates, the wider
+the gap. On this model, with two KV heads, adaptive allocation and dense storage
+are in direct tension.
+
+Both comparisons are therefore reported, and they answer different questions:
+
+- **Equal stored entries** is the primary. It is the honest memory comparison and
+  the one a practitioner faces, and memory is this study's headline metric. At
+  equal stored entries an unequal allocator gets fewer effective entries.
+- **Equal allocated entries** is the faithful reproduction. It is the comparison
+  the papers make, and the one that isolates whether the allocation mechanism
+  helps at all.
+
+**This overhead is a property of dense storage, not of Ada-KV.** Paged-attention
+implementations store ragged per-head lengths natively and pay no such penalty.
+Any overhead figure here is a statement about running the method on a dense cache
+with eager attention, and must not be read as a cost of the method in general.
 
 Both axes are reported for every configuration — absolute retained entries and
 retained fraction of context — because neither can be assumed to be the

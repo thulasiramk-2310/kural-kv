@@ -162,11 +162,27 @@ def decode(model, cache, next_token, n_steps, device, start_position):
     produced = []
     token = next_token
     position = start_position
+    # A per-layer budget schedule (PyramidKV) leaves layers with different cache
+    # lengths, which the model's mask construction cannot express: the causal
+    # mask is built once and shared by every layer of a given attention type, so
+    # a mask sized from layer 0 fails a shape check in every shorter layer.
+    # Passing attention_mask=None does not help, because the model then builds
+    # the mask itself from the same single length.
+    #
+    # The model does accept a pre-built mask mapping and skips construction
+    # entirely when given one, and eager attention skips the mask add when the
+    # mask is None. For single-token decoding nothing needs masking anyway --
+    # the new token follows everything cached -- so a ragged cache is decoded
+    # with an explicitly empty mapping and each layer uses its own length.
+    ragged = len({l.keys.shape[2] for l in cache.layers}) > 1
+    ragged_mask = {t: None for t in getattr(model.config, "layer_types", None)
+                   or ["full_attention"]}
     for _ in range(n_steps):
         past = cache.get_seq_length()
         cache_position = torch.tensor([past], device=device)
         position_ids = torch.tensor([[position]], device=device)
-        attention_mask = torch.ones(1, past + 1, dtype=torch.long, device=device)
+        attention_mask = (ragged_mask if ragged else
+                          torch.ones(1, past + 1, dtype=torch.long, device=device))
         out = model(
             input_ids=token.view(1, 1),
             past_key_values=cache,

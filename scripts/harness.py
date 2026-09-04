@@ -369,6 +369,84 @@ def load_prefill(path, device, identity):
 # --------------------------------------------------------------------------
 # Policies. Each returns a NEW cache; none mutates its input.
 # --------------------------------------------------------------------------
+def pyramid_budgets(num_layers, budget, window, beta=20):
+    """Per-layer budgets for PyramidKV, summing to `num_layers * budget`.
+
+    PyramidKV's claim is that lower layers attend broadly and upper layers
+    concentrate, so budget should decrease with depth rather than be uniform.
+    The schedule is the paper's arithmetic sequence over the *selectable* portion
+    of the budget -- the part above the mandatory observation window:
+
+        min = selectable // beta,  max = selectable * 2 - min
+
+    with layers interpolating linearly from max down to min.
+
+    The total is then corrected to hit `num_layers * budget` exactly, because
+    this study compares methods at equal TOTAL retained entries. Rounding a
+    linear ramp otherwise leaves a few entries of drift, and a method that
+    quietly retained 1% more would look better for the wrong reason.
+    """
+    sel = max(1, budget - window)
+    if num_layers == 1:
+        return [budget]
+    lo = max(1, sel // beta)
+    hi = max(lo, sel * 2 - lo)
+    step = (hi - lo) / (num_layers - 1)
+    raw = [max(1, int(round(hi - i * step))) for i in range(num_layers)]
+    # Correct drift so the totals match exactly, spreading the adjustment over
+    # the layers with the most room rather than dumping it on one.
+    target = sel * num_layers
+    i = 0
+    while sum(raw) != target:
+        d = 1 if sum(raw) < target else -1
+        j = max(range(num_layers), key=lambda k: raw[k]) if d < 0 else i % num_layers
+        if d < 0 and raw[j] <= 1:
+            break
+        raw[j] += d
+        i += 1
+    return [r + window for r in raw]
+
+
+def _select(scores_layer, k, v, budget, window, ctx, kv_heads):
+    """Shared top-k selection: group reduction, pooling, forced window, gather.
+
+    Every policy in this study selects the same way and differs only in how much
+    budget each layer or head is given. Keeping the selection identical is what
+    makes the comparison about allocation rather than about scoring.
+    """
+    _, _, L, D = k.shape
+    if budget >= L:
+        return k.clone(), v.clone()
+    sc = reduce_group(scores_layer, kv_heads, ctx["group_reduce"]).clone()
+    if ctx["pool_kernel"] > 1:
+        sc = torch.nn.functional.max_pool1d(
+            sc.unsqueeze(0), kernel_size=ctx["pool_kernel"], stride=1,
+            padding=ctx["pool_kernel"] // 2).squeeze(0)[:, :L]
+    sc[:, L - window:] = float("inf")
+    idx, _ = sc.topk(budget, dim=-1).indices.sort(dim=-1)
+    g = idx.unsqueeze(0).unsqueeze(-1).expand(1, kv_heads, budget, D)
+    return k.gather(2, g).contiguous(), v.gather(2, g).contiguous()
+
+
+def policy_pyramid(cache, ctx):
+    """PyramidKV: same selection as SnapKV, budget tapered across layers.
+
+    Uniform-per-layer allocation is SnapKV; this differs only in the schedule,
+    so any difference in the result is attributable to allocation across depth
+    and to nothing else.
+    """
+    n_layers = len(cache.layers)
+    budgets = pyramid_budgets(n_layers, ctx["budget"], ctx["window"])
+    new = DynamicCache()
+    for i, layer in enumerate(cache.layers):
+        kv_heads = layer.keys.shape[1]
+        kk, vv = _select(ctx["scores"][i], layer.keys, layer.values,
+                         min(budgets[i], layer.keys.shape[2]), ctx["window"],
+                         ctx, kv_heads)
+        new.update(kk, vv, i)
+    return new
+
+
 def policy_full(cache, ctx):
     """Full-cache baseline. Every method is compared against this, per model."""
     return clone_cache(cache)
@@ -406,7 +484,8 @@ def policy_snapkv(cache, ctx):
     return new
 
 
-POLICIES = {"full": policy_full, "snapkv": policy_snapkv}
+POLICIES = {"full": policy_full, "snapkv": policy_snapkv,
+            "pyramidkv": policy_pyramid}
 
 
 # --------------------------------------------------------------------------
@@ -606,8 +685,12 @@ def main():
                 torch.cuda.synchronize()
                 select_s = time.perf_counter() - t1
                 # Read before decode: decoding appends, so reading afterwards
-                # reports budget + decode_tokens.
-                kept = evicted.layers[0].keys.shape[2]
+                # reports budget + decode_tokens. Summed over layers, not read
+                # from layer 0: PyramidKV tapers budget with depth, so layer 0 is
+                # its largest layer and would overstate what it retained by ~80%.
+                # Total entries is also the axis methods are compared on.
+                kept_total = sum(l.keys.shape[2] for l in evicted.layers)
+                kept = kept_total // len(evicted.layers)
                 produced, _ = decode(model, evicted, first, decode_tokens,
                                      device, start_position=next_pos)
             torch.cuda.synchronize()
@@ -628,6 +711,7 @@ def main():
                 "group_reduce": args.group_reduce,
                 "prefill_source": source, "prefill_seconds": round(prefill_s, 4),
                 "prompt_len": prompt_len, "kept": kept,
+                "kept_total": kept_total, "n_layers": len(evicted.layers),
                 "kept_fraction": round(kept / prompt_len, 4),
                 "selection_seconds": round(select_s, 4),   # latency includes selection
                 "total_seconds": round(total_s, 4),
