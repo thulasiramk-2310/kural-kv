@@ -5,7 +5,37 @@ Reproduction study of KV-cache eviction methods on small GQA models.
 The protocol every measurement is produced under is recorded in
 [docs/METHODS.md](docs/METHODS.md).
 
-## Research question
+## What this study is asking
+
+It began as a transfer question: published eviction findings are established
+mostly on 7B MHA models, and this asks whether they hold on a 1B-class GQA model
+that fits on one consumer GPU. That question is still here, and the GQA framing
+below is still the reason it is worth asking.
+
+The measurements have moved it somewhere more general. **Every scoring heuristic
+in this literature is built on identifying important tokens and keeping them.**
+This repository now has a direct measurement saying that frame is incomplete:
+the answer's own entries survive selection at essentially the same rate at 2K and
+16K context, and the model can only use them at 2K.
+
+| budget | 2048 recall / accuracy | 16384 recall / accuracy |
+|---|---|---|
+| 181 entries | 0.830 / 0.800 | 0.793 / **0.250** |
+| 362 entries | 0.893 / 0.900 | 0.856 / **0.300** |
+
+Selection recall differs by 0.037 where accuracy differs by 0.550. And within
+16K, raising the budget from 181 to 2900 entries buys 0.55 of accuracy while
+buying only 0.12 of target retention — so most of what a larger budget provides
+is not the answer's own keys.
+
+So the question this repository is now answering is: **what actually governs
+eviction damage?** Keeping the important tokens is measurably not the whole of
+it. Three candidate mechanisms have been tested and rejected — query
+localisation, scoring-mass concentration, and key eviction — and the finding is
+reported without one, in
+[docs/METHODS.md](docs/METHODS.md).
+
+## Why GQA is the right setting for it
 
 Published KV-cache eviction methods — Ada-KV, LKV, LU-KV — allocate cache budget
 **per attention head**. On the MHA models they were developed against, mostly 7B,
