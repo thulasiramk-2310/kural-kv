@@ -173,6 +173,70 @@ distinction between "eviction preserves quality at 5% budget" and "eviction
 preserves quality at 5% budget on tasks whose targets are lexically distinctive"
 is the difference between a usable method and a benchmark artefact.
 
+## Result: the layer axis acts, the head axis does not
+
+RULER `niah_single_1`, 16384 context, n=20, all three methods at matched budgets.
+The prediction recorded in the README before this ran was that Ada-KV would show
+little or no gain, because the recall measurement had already located the failure
+downstream of selection and Ada-KV's dials only change what selection keeps.
+
+| budget | SnapKV | PyramidKV | Ada-KV | Ada−Snap | Pyr−Snap |
+|---|---|---|---|---|---|
+| 181 | 0.250 | 0.200 | 0.350 | +0.100 | −0.050 |
+| 362 | 0.300 | 0.400 | 0.350 | +0.050 | +0.100 |
+| 630 | 0.450 | 0.500 | 0.300 | −0.150 | +0.050 |
+| 724 | 0.400 | 0.600 | 0.450 | +0.050 | +0.200 |
+| 1451 | 0.650 | 0.750 | 0.600 | −0.050 | +0.100 |
+| 2900 | 0.800 | 0.850 | 0.850 | +0.050 | +0.050 |
+| **mean** | | | | **+0.008** | **+0.075** |
+
+**Ada-KV is flat**: mean +0.008 at equal allocated entries, with deltas swinging
+from −0.150 to +0.100 and signs mixed across the grid. **PyramidKV gains**:
+positive at five of six budgets, mean +0.075. At 2048 context PyramidKV is level
+with SnapKV (means 0.663 vs 0.625 over the shared grid), so its advantage appears
+only at the longer context.
+
+Resolution: at n=20 one sample is 0.05, so +0.05 is one sample and +0.10 is two.
+No individual cell is a measured effect. What the grid supports is the *pattern*
+— one method's deltas consistently signed, the other's not — and not the size of
+any gap.
+
+Read against the four outcomes written down beforehand, this is the first row:
+the prediction holds and the two allocation axes separate. Depth reallocation
+does something at long context; head reallocation does not, on a model where it
+has two dials.
+
+Worth stating plainly because it is a context-dependent effect from a
+context-independent rule: PyramidKV's taper contains no term for sequence length,
+yet it buys nothing at 2K and something at 16K. Whatever it is doing, it is not
+improving selection, since selection recall was already shown to be
+context-invariant.
+
+### Ada-KV's storage overhead grows with budget, not against it
+
+| budget | 181 | 362 | 630 | 724 | 1451 | 2900 |
+|---|---|---|---|---|---|---|
+| stored / allocated | 1.15x | 1.27x | 1.35x | 1.36x | 1.40x | 1.40x |
+
+The expectation was that adaptive allocation would cost most where compression
+matters most. It runs the other way: the penalty is smallest at the tightest
+budget, 1.15x at 181 entries (1.1% of context), and saturates near 1.40x as the
+budget loosens. At tight budgets the pooled top-k has little room to skew, so the
+heads receive near-equal counts and the dense tensor wastes little.
+
+At **equal stored** entries — the honest memory comparison, with SnapKV
+interpolated to Ada-KV's actual footprint — Ada-KV averages **−0.026** against
+SnapKV. Paying for what it occupies rather than what it allocates, it is slightly
+worse than uniform allocation.
+
+Ada-KV also costs about 3x SnapKV's selection time (23ms against 8ms p50 at
+16K), which the protocol counts, since every latency figure here includes
+selection overhead.
+
+As recorded above, this overhead is a property of dense storage. Paged-attention
+implementations hold ragged per-head lengths natively and pay none of it, so the
+equal-stored penalty is a statement about this stack and not about the method.
+
 ## Targeted follow-ups are reported separately from the grid
 
 Where a sweep is underpowered, extra samples are spent at the budgets with the

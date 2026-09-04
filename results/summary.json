@@ -342,5 +342,39 @@
       "key eviction"
     ],
     "mechanism": "unexplained; not pursued further"
+  },
+  "method_comparison": {
+    "source_logs": [
+      "results/methods_2k.json",
+      "results/methods_16k.json"
+    ],
+    "task": "RULER niah_single_1",
+    "context": 16384,
+    "n_per_point": 20,
+    "prediction_made_before_run": "Ada-KV shows little or no gain over SnapKV at matched entries at 16K, because the failure is downstream of selection.",
+    "outcome": "Prediction holds (first of four pre-enumerated outcomes).",
+    "mean_delta_vs_snapkv_equal_allocated": {
+      "adakv": 0.008,
+      "pyramidkv": 0.075
+    },
+    "mean_delta_vs_snapkv_equal_stored": {
+      "adakv": -0.026
+    },
+    "adakv_storage_overhead_by_budget": {
+      "181": 1.153,
+      "362": 1.273,
+      "630": 1.35,
+      "724": 1.362,
+      "1451": 1.402,
+      "2900": 1.395
+    },
+    "overhead_direction": "Grows as budget LOOSENS, contrary to expectation. Smallest (1.15x) at the tightest budget, where compression matters most.",
+    "selection_cost_p50_ms_16k": {
+      "snapkv": 8.0,
+      "pyramidkv": 7.9,
+      "adakv": 23.5
+    },
+    "resolution": "n=20, one sample = 0.05. No individual cell is a measured effect; the supported claim is the consistency of sign, not any gap size.",
+    "pyramidkv_2k_vs_16k": "Level with SnapKV at 2048, positive at 5 of 6 budgets at 16384, from a schedule with no context term in it."
   }
 }
