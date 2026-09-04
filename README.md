@@ -51,8 +51,8 @@ its groupmates.
 Two consequences follow:
 
 1. Head-level budget allocation — reported in those papers as the dominant
-   factor — does not straightforwardly exist on a GQA model. The mechanism the
-   findings attribute their gains to has no direct analogue here.
+   factor — has **two dials on this model** rather than twelve. Whether that
+   matters is a measurement, not a deduction.
 2. Within a group, the query heads may disagree about which tokens matter. An
    eviction that is cheap for one can be expensive for another, and a single
    group-level decision cannot satisfy both.
@@ -65,9 +65,15 @@ four are dispersed, no allocation serves both. The allocation is not per head.
 It is per committee.
 
 LKV's headline result — that the learned global budget contributes more than the
-selection policy itself — inherits the same problem. If the dominant lever has 2
-positions instead of 12, that finding does not obviously survive. Whether it does
-is what this repository exists to measure.
+selection policy itself — meets the same narrowed lever.
+
+**Stated before the run, so it is a prediction rather than a rationalisation.**
+These two results compose rather than conflict: Ada-KV has two dials on this
+model, and the recall finding says the thing those dials control — which entries
+selection keeps — is not what binds at long context. So the prediction is *little
+or no gain over SnapKV at matched total retained entries at 16K*. If it gains
+anyway, reallocation is doing something other than improving selection, and that
+is the more interesting outcome.
 
 ### How wide is the lever, across models
 
