@@ -119,5 +119,89 @@
       "meta-llama/Llama-3.2-1B-Instruct",
       "google/gemma-2-2b-it"
     ]
+  },
+  "budget_axis_discrimination": {
+    "source_logs": [
+      "results/discrimination_2k.json",
+      "results/discrimination_16k.json"
+    ],
+    "task": "synthetic needle (diagnostic, not a reported benchmark)",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "dtype": "bf16",
+    "policy": "snapkv",
+    "n_per_point": 8,
+    "finding": "Retrieval accuracy tracks the ABSOLUTE number of retained KV entries, not the retained fraction. Both 2048 and 16384 context transition at the same absolute budgets: 0.00 at 45 entries, 1.00 at 181. As fractions those are 2.20%-8.84% at 2K and 0.27%-1.10% at 16K, an 8x shift exactly tracking the context ratio. A percentage budget grid is therefore the wrong axis for this task, and percentage budgets are not comparable across context lengths.",
+    "matched_absolute_budgets": [
+      {
+        "kept": 45,
+        "ctx2048_accuracy": 0.0,
+        "ctx2048_fraction": 0.022,
+        "ctx16384_accuracy": 0.0,
+        "ctx16384_fraction": 0.0027
+      },
+      {
+        "kept": 61,
+        "ctx2048_accuracy": 0.125,
+        "ctx2048_fraction": 0.0298,
+        "ctx16384_accuracy": 0.125,
+        "ctx16384_fraction": 0.0037
+      },
+      {
+        "kept": 91,
+        "ctx2048_accuracy": 0.5,
+        "ctx2048_fraction": 0.0444,
+        "ctx16384_accuracy": 0.875,
+        "ctx16384_fraction": 0.0056
+      },
+      {
+        "kept": 128,
+        "ctx2048_accuracy": 0.875,
+        "ctx2048_fraction": 0.0625,
+        "ctx16384_accuracy": 0.875,
+        "ctx16384_fraction": 0.0078
+      },
+      {
+        "kept": 181,
+        "ctx2048_accuracy": 1.0,
+        "ctx2048_fraction": 0.0884,
+        "ctx16384_accuracy": 1.0,
+        "ctx16384_fraction": 0.011
+      },
+      {
+        "kept": 256,
+        "ctx2048_accuracy": 1.0,
+        "ctx2048_fraction": 0.125,
+        "ctx16384_accuracy": 1.0,
+        "ctx16384_fraction": 0.0156
+      },
+      {
+        "kept": 362,
+        "ctx2048_accuracy": 1.0,
+        "ctx2048_fraction": 0.1768,
+        "ctx16384_accuracy": 0.875,
+        "ctx16384_fraction": 0.0221
+      },
+      {
+        "kept": 512,
+        "ctx2048_accuracy": 1.0,
+        "ctx2048_fraction": 0.25,
+        "ctx16384_accuracy": 1.0,
+        "ctx16384_fraction": 0.0312
+      }
+    ],
+    "caveat": "n=8; the two points that differ (91, 362) differ by a single sample and are within sampling noise.",
+    "chosen_grid_tokens": [
+      32,
+      45,
+      64,
+      91,
+      128,
+      181,
+      256,
+      362,
+      512,
+      1024
+    ],
+    "grid_rationale": "Absolute entries, log-spaced, with resolution concentrated in the 45-181 transition and two saturated points above it."
   }
 }

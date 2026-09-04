@@ -92,6 +92,22 @@ def truncate_at_stop(tokens, stop_ids):
     return tokens
 
 
+def pctiles(xs):
+    """Median with p10/p90.
+
+    Never a mean: selection timing carries a warmup outlier that moves a mean
+    and does not move a median. Returns None when warmup has consumed every
+    sample, rather than reporting a statistic from nothing.
+    """
+    if not xs:
+        return {"sel_p50_ms": None, "sel_p10_ms": None, "sel_p90_ms": None, "sel_n": 0}
+    xs = sorted(xs)
+    def q(f):
+        return xs[min(len(xs) - 1, max(0, int(round(f * (len(xs) - 1)))))] * 1000
+    return {"sel_p50_ms": round(q(0.5), 2), "sel_p10_ms": round(q(0.1), 2),
+            "sel_p90_ms": round(q(0.9), 2), "sel_n": len(xs)}
+
+
 def grade(text, code):
     """Exact: the code is present in the generation or it is not."""
     return code in text
@@ -270,7 +286,14 @@ def main():
     ap.add_argument("--context", type=int, default=4096)
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--policies", nargs="+", default=["full", "snapkv"])
-    ap.add_argument("--budget-fraction", type=float, default=0.5)
+    ap.add_argument("--budget-fractions", type=float, nargs="+", default=[0.5],
+                    help="retained fraction(s) of the prompt's KV entries. Multiple "
+                         "values sweep inside the config-inner loop, so each sample's "
+                         "prefill is loaded once for the whole grid")
+    ap.add_argument("--budget-tokens", type=int, nargs="*", default=None,
+                    help="absolute retained entry count(s); overrides fractions. "
+                         "Retrieval may depend on how many entries survive rather "
+                         "than on what share of the prompt they are")
     ap.add_argument("--window", type=int, default=32,
                     help="observation window, 32-64 per protocol")
     ap.add_argument("--group-reduce", choices=("sum", "max", "mean"), default="sum",
@@ -278,6 +301,9 @@ def main():
                          "their shared KV entry. Re-runnable against an existing "
                          "prefill cache, since scores are stored per query head")
     ap.add_argument("--pool-kernel", type=int, default=7)
+    ap.add_argument("--timing-warmup", type=int, default=1,
+                    help="leading samples discarded from timing stats PER "
+                         "CONFIGURATION, since each config re-warms its own kernels")
     ap.add_argument("--prefill-chunk", type=int, default=128)
     ap.add_argument("--decode-tokens", type=int, default=24)
     ap.add_argument("--seed", type=int, default=0)
@@ -305,7 +331,8 @@ def main():
                 "context": args.context, "window": args.window,
                 "prefill_chunk": args.prefill_chunk}
     print(f"{args.model_id}  {args.dtype}  ctx={args.context}  "
-          f"budget={args.budget_fraction}  window={args.window}  "
+          f"budgets={args.budget_tokens or args.budget_fractions}  "
+          f"window={args.window}  "
           f"group_reduce={args.group_reduce}  "
           f"cache={'on' if args.cache_dir else 'off'}\n")
 
@@ -335,20 +362,34 @@ def main():
 
         first = torch.tensor(first_id, device=device)
         before = cache_signature(cache)
-        budget = max(args.window + 1, int(prompt_len * args.budget_fraction))
-        ctx = {"scores": scores, "budget": budget, "window": args.window,
-               "group_reduce": args.group_reduce, "pool_kernel": args.pool_kernel}
 
+        # Config-inner: policy x budget, all against this one loaded prefill.
+        # `full` ignores the budget, so it is run once rather than per grid point.
+        if args.budget_tokens:
+            budgets = [(f"{b}tok", max(args.window + 1, b)) for b in args.budget_tokens]
+        else:
+            budgets = [(f"{f:g}", max(args.window + 1, int(prompt_len * f)))
+                       for f in args.budget_fractions]
+        configs = []
         for name in args.policies:
+            configs += ([(name, "-", prompt_len)] if name == "full"
+                        else [(name, label, b) for label, b in budgets])
+
+        for name, blabel, budget in configs:
+            ctx = {"scores": scores, "budget": budget, "window": args.window,
+                   "group_reduce": args.group_reduce, "pool_kernel": args.pool_kernel}
+            torch.cuda.synchronize()
             t1 = time.perf_counter()
             with torch.no_grad():
                 evicted = POLICIES[name](cache, ctx)
+                torch.cuda.synchronize()
                 select_s = time.perf_counter() - t1
                 # Read before decode: decoding appends, so reading afterwards
                 # reports budget + decode_tokens.
                 kept = evicted.layers[0].keys.shape[2]
                 produced, _ = decode(model, evicted, first, args.decode_tokens,
                                      device, start_position=next_pos)
+            torch.cuda.synchronize()
             total_s = time.perf_counter() - t1
 
             assert cache_signature(cache) == before, (
@@ -360,7 +401,8 @@ def main():
             text = tok.decode(produced, skip_special_tokens=True)
             rows.append({
                 "sample": n, "seed": seed, "depth": sample["depth"],
-                "policy": name, "group_reduce": args.group_reduce,
+                "policy": name, "budget_label": blabel, "budget": budget,
+                "group_reduce": args.group_reduce,
                 "prefill_source": source, "prefill_seconds": round(prefill_s, 4),
                 "prompt_len": prompt_len, "kept": kept,
                 "kept_fraction": round(kept / prompt_len, 4),
@@ -369,26 +411,31 @@ def main():
                 "correct": grade(text, sample["code"]),
                 "expected": sample["code"], "generated": text.strip()[:120],
             })
-            print(f"  s{n} {name:<8} [{source:>5}] kept {kept:>6}/{prompt_len} "
-                  f"({kept/prompt_len:.0%})  {'HIT ' if rows[-1]['correct'] else 'miss'}  "
-                  f"sel {select_s*1000:>6.1f}ms  {text.strip()[:40]!r}")
+            print(f"  s{n} {name:<7}{blabel:>7} [{source:>5}] kept {kept:>6}"
+                  f" ({kept/prompt_len:>6.2%})  "
+                  f"{'HIT ' if rows[-1]['correct'] else 'miss'}  {text.strip()[:34]!r}")
             del evicted
         del cache, scores
         torch.cuda.empty_cache()
 
     summary = {}
-    for name in args.policies:
-        sel = [r for r in rows if r["policy"] == name]
-        summary[name] = {
-            "n": len(sel),
+    for key in dict.fromkeys((r["policy"], r["budget_label"]) for r in rows):
+        sel = [r for r in rows if (r["policy"], r["budget_label"]) == key]
+        summary[f"{key[0]}@{key[1]}"] = {
+            "policy": key[0], "budget_label": key[1], "n": len(sel),
+            "mean_kept": round(sum(r["kept"] for r in sel) / len(sel), 1),
             "accuracy": round(sum(r["correct"] for r in sel) / len(sel), 4),
             "mean_kept_fraction": round(sum(r["kept_fraction"] for r in sel) / len(sel), 4),
-            "mean_selection_seconds": round(sum(r["selection_seconds"] for r in sel) / len(sel), 4),
+            # Warmup discarded per configuration, not per run: each config
+            # re-warms its own kernels, so the first sample of every one is slow.
+            **pctiles([r["selection_seconds"] for r in sel][args.timing_warmup:]),
         }
-    print("\npolicy    n   accuracy  kept   sel ms")
-    for name, v in summary.items():
-        print(f"{name:<9} {v['n']:<3} {v['accuracy']:>7.2f}  "
-              f"{v['mean_kept_fraction']:>5.0%}  {v['mean_selection_seconds']*1000:>6.1f}")
+    print("\npolicy   budget      kept    kept%   n  accuracy   sel p50 / p10-p90 ms")
+    for v in summary.values():
+        t = (f"{v['sel_p50_ms']:>6.1f} / {v['sel_p10_ms']:.1f}-{v['sel_p90_ms']:.1f}"
+             if v.get("sel_p50_ms") is not None else "   n/a")
+        print(f"{v['policy']:<8} {v['budget_label']:>7}  {v['mean_kept']:>8.0f} "
+              f"{v['mean_kept_fraction']:>7.2%} {v['n']:>3}  {v['accuracy']:>7.2f}   {t}")
     print(f"prefill cache: {hits} hit, {misses} miss")
 
     payload = {

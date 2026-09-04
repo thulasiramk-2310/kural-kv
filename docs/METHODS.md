@@ -123,11 +123,13 @@ shared entry by an explicit rule:
 - **`max`.** Retain the entry if any head in the group needs it. Protects
   minority heads, at the cost of spending budget on entries most of the group
   ignores.
-- **`mean`.** For uniform group sizes this is `sum` divided by a constant, a
+- **`mean`.** For **uniform** group sizes this is `sum` divided by a constant, a
   monotone transform that leaves the top-k ranking unchanged. Verified
-  empirically: `mean` and `sum` produce bit-identical generations. It is retained
-  only for comparability across models whose group sizes differ, and is not an
-  independent alternative.
+  empirically: `mean` and `sum` produce bit-identical generations. It is not an
+  independent alternative on such a model, which halves the ablation to `sum`
+  versus `max`. The equivalence depends on uniformity and would break on a model
+  with ragged group sizes, where the divisor differs per group and the ranking
+  can move; it is retained for that case.
 
 This is a design decision, not a detail, and it has no correct answer inherited
 from the literature. Observation-window scores are therefore cached **per query
@@ -151,8 +153,13 @@ the same samples run live and then from cache must produce identical rows. The
 check compares generated text as well as grades, because matching only on
 correctness would pass while the underlying generations differed. At 2048 context
 and 3% budget the two runs agree on every field, including the incorrect answers
-— `60941`, `84608`, `1731` — which are the more sensitive comparison, since a
-hallucinated code depends on precisely which keys survived eviction.
+— `60941`, `84608`, `1731`.
+
+The incorrect answers are the load-bearing part of that comparison. A
+grade-only check passes whenever both paths happen to fail, which at a harsh
+budget is most of the time, so it would certify a broken cache path as sound. A
+hallucinated code is a function of precisely which keys survived eviction, so
+agreement on it constrains the cache contents rather than only the verdict.
 
 ## Context range
 
@@ -232,6 +239,49 @@ logical position coincide, the naive resume matches exactly, and the test
 certifies the persisted position as unnecessary — immediately before a harness
 begins saving post-eviction states under a guarantee that was never exercised.
 Both paths are therefore checked.
+
+## Tasks: what is diagnostic and what is reported
+
+The synthetic needle task in `scripts/harness.py` builds its own prompt — filler
+text, a five-digit code at a randomised depth, a question asking for it back —
+and grades by exact substring match. It is a **diagnostic, not a reported
+benchmark**. No number from it is comparable to a published result, because no
+one else runs it.
+
+It is retained because that exactness is what makes the pipeline debuggable. The
+harness's first run scored 0.00 on the full-cache baseline, which is impossible
+if the pipeline is intact, and that unambiguity located three silent bugs. When a
+benchmark score later looks strange, the synthetic task is run first to establish
+whether the pipeline is sound before eviction is blamed. A fuzzy grader cannot
+serve that purpose.
+
+Reported retrieval numbers come from RULER, which is generated from a config
+rather than downloaded and defines standard variants; the synthetic task is
+approximately RULER's single-needle case. Reported generation-quality numbers
+come from LongBench, whose metrics are F1 and ROUGE rather than exact match.
+Neither is wired up yet.
+
+## The budget axis is absolute, not fractional
+
+Budgets are specified as an absolute count of retained KV entries. This is not
+the convention in the literature, which reports percentage budgets, and the
+departure is deliberate.
+
+Measured on the synthetic needle task, 8 samples per point, SnapKV on
+Qwen2.5-1.5B: contexts of 2048 and 16384 transition at the *same absolute
+budgets* — 0.00 accuracy at 45 retained entries, 1.00 at 181 — despite an
+eightfold difference in context length. Expressed as fractions those same
+thresholds are 2.20%–8.84% of context at 2K and 0.27%–1.10% at 16K, a shift that
+exactly tracks the context ratio.
+
+The consequence is that a percentage budget is not comparable across context
+lengths: 3% of a 2K context fails this task outright while 3% of a 16K context
+saturates it, because the first retains 61 entries and the second 512. A
+percentage grid tuned at one context length will saturate at another.
+
+Grid in use: 32, 45, 64, 91, 128, 181, 256, 362, 512, 1024 retained entries,
+log-spaced with resolution concentrated in the transition. (n=8; the two matched
+points that disagree across contexts differ by a single sample.)
 
 ## Measurement
 
