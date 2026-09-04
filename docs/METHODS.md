@@ -173,6 +173,23 @@ distinction between "eviction preserves quality at 5% budget" and "eviction
 preserves quality at 5% budget on tasks whose targets are lexically distinctive"
 is the difference between a usable method and a benchmark artefact.
 
+## Targeted follow-ups are reported separately from the grid
+
+Where a sweep is underpowered, extra samples are spent at the budgets with the
+most room to discriminate rather than spread across the grid: saturated budgets
+cannot separate methods at any sample count.
+
+**Choosing that budget by looking at the results is selecting on the outcome.**
+It is a legitimate way to decide where to spend compute and an illegitimate way
+to produce a headline number, because the budget showing the largest gap in a
+noisy grid is the one most likely to have been helped by noise, and re-measuring
+there regresses toward the mean by construction.
+
+So any budget chosen after seeing the grid is labelled post hoc at the point of
+reporting, and its higher-n result is reported as a **targeted follow-up**, never
+folded into the main grid. The main grid is reported at its own sample count with
+its own resolution limit stated.
+
 ## Comparing methods: equal total retained entries
 
 **Methods are compared at equal total retained KV entries, never at equal

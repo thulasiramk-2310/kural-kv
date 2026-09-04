@@ -71,9 +71,21 @@ selection policy itself — meets the same narrowed lever.
 These two results compose rather than conflict: Ada-KV has two dials on this
 model, and the recall finding says the thing those dials control — which entries
 selection keeps — is not what binds at long context. So the prediction is *little
-or no gain over SnapKV at matched total retained entries at 16K*. If it gains
-anyway, reallocation is doing something other than improving selection, and that
-is the more interesting outcome.
+or no gain over SnapKV at matched total retained entries at 16K*.
+
+All four outcomes are enumerated here **before the sweep finished**, so that
+whichever lands is read against a written expectation rather than explained
+afterwards:
+
+| Ada-KV (head axis) | PyramidKV (layer axis) | reading |
+|---|---|---|
+| flat | gains | prediction holds; the two axes separate cleanly |
+| gains | gains | prediction wrong; both axes do something despite two dials |
+| gains | flat | prediction wrong in the *opposite* direction — head reallocation matters and depth does not, which contradicts the 2K/16K pattern already observed and would need explaining, not accommodating |
+| flat | flat | neither axis matters at this scale; allocation is not the lever, consistent with the downstream-of-selection finding |
+
+The third row is the one that would be easiest to rationalise after the fact and
+hardest to justify, so it is written down with that noted.
 
 ### How wide is the lever, across models
 
