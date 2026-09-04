@@ -327,6 +327,20 @@
     ],
     "finding": "Selection recall is context-invariant while accuracy is not: at 181 entries the contexts differ by 0.037 in recall and 0.550 in accuracy. The 16K failure is downstream of selection, not a ranking failure. From 181 to 2900 entries at 16K, accuracy rises 0.25->0.80 while target recall rises only 0.79->0.91.",
     "partial_retention_is_worthless": "At 91 entries some answer token survives in 85-89% of units but every token in 11-16%, with accuracy 0.000 at both contexts.",
-    "not_yet_measured": "Recall of the needle's KEY tokens, which the query matches on, as distinct from the value tokens measured here."
+    "key_recall_probe": {
+      "source_logs": [
+        "results/recall_key_ruler_2k.json",
+        "results/recall_key_ruler_16k.json"
+      ],
+      "hypothesis": "The needle's key is evicted while its value survives, so the model cannot bind the answer to the question.",
+      "result": "Rejected. Key recall is 0.942 (2K) vs 0.921 (16K) at 181 entries where accuracy is 0.800 vs 0.250, and keys survive better than values at every budget.",
+      "caveat": "any-token-kept is 100% for keys because the key also appears in the question, inside the forced observation window; all-tokens-kept is the meaningful figure."
+    },
+    "hypotheses_rejected": [
+      "query localisation",
+      "scoring-mass concentration",
+      "key eviction"
+    ],
+    "mechanism": "unexplained; not pursued further"
   }
 }

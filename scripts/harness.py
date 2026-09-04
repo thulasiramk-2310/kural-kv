@@ -441,6 +441,8 @@ def main():
                          "their shared KV entry. Re-runnable against an existing "
                          "prefill cache, since scores are stored per query head")
     ap.add_argument("--pool-kernel", type=int, default=7)
+    ap.add_argument("--recall-target", choices=("value", "key"), default="value",
+                    help="which part of the needle to trace through selection")
     ap.add_argument("--measure-recall", action="store_true",
                     help="report whether the answer's own entries survive top-k "
                          "at each budget, then skip decoding. Separates a ranking "
@@ -531,8 +533,17 @@ def main():
 
         if args.measure_recall:
             kvh = model.config.num_key_value_heads
-            ref = sample["reference"]
-            value = ref[0] if isinstance(ref, (list, tuple)) else ref
+            # The needle carries a key and a value. The value is the answer;
+            # the key is what the query matches on. Keys evicted while values
+            # survive would leave the model holding the answer with no way to
+            # bind it to the question.
+            if args.recall_target == "key":
+                value = (sample.get("meta") or {}).get("key")
+                if value is None:
+                    raise SystemExit(f"task {args.task!r} exposes no key to trace")
+            else:
+                ref = sample["reference"]
+                value = ref[0] if isinstance(ref, (list, tuple)) else ref
             spans = find_target_positions(tok, sample["input_ids"], str(value))
             if not spans:
                 sprint(f"  s{n} target {value!r} NOT LOCATED in prompt; skipped")

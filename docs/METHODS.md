@@ -456,11 +456,34 @@ survives in 85-89% of units while every token survives in 11-16%, and accuracy i
 signal; a recall metric that counted partial hits would have reported 87% success
 at a budget that retrieves nothing.
 
-One measurement not yet made, stated so it is not mistaken for settled: this
-locates the answer's *value* tokens. The needle also carries a *key*, which is
-what the query matches on. If keys are evicted while values survive, the model
-would retain the answer without being able to bind it to the question, which
-would be a mechanism consistent with everything above.
+### Keys are not preferentially evicted either
+
+The obvious mechanism was that the needle's *key* -- what the query matches on --
+might be evicted while its *value* survives, leaving the model holding the answer
+with no way to bind it to the question. Traced with `--recall-target key`:
+
+| budget | value recall 2K / 16K | key recall 2K / 16K | accuracy 2K / 16K |
+|---|---|---|---|
+| 91 | 0.163 / 0.114 | 0.746 / 0.755 | 0.000 / 0.000 |
+| 181 | 0.830 / 0.793 | 0.942 / 0.921 | 0.800 / 0.250 |
+| 362 | 0.893 / 0.856 | 0.963 / 0.933 | 0.900 / 0.300 |
+
+Keys survive at essentially the same rate at both context lengths -- differing by
+2.1 points at 181 entries where accuracy differs by 0.550 -- and they survive
+*better* than values, not worse. The mechanism is not key eviction.
+
+(The `any-token kept` figure is 100% for keys at every budget and should not be
+read as a result: the key also appears in the question, which sits inside the
+forced observation window. `all-tokens kept` is the meaningful column, since it
+requires the needle's own occurrence to survive as well.)
+
+**Three hypotheses have now been tested and rejected** -- query localisation,
+scoring-mass concentration, and key eviction -- against a confirmed finding that
+the failure is downstream of selection. No fourth is pursued. The remaining
+candidate is how attention over a compacted cache reallocates its mass, which is
+harder to probe and is not chased here. The finding stands without a mechanism:
+retaining a fact is not sufficient for using it, and at long context the budget's
+effect is mostly not about whether the target survives.
 
 The grid remains absolute — 32, 45, 64, 91, 128, 181, 256, 362, 512, 1024 — with
 percentage-matched points added when contexts are compared, since neither axis
