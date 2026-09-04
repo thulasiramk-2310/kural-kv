@@ -246,7 +246,14 @@
         "gap": 0.01
       }
     ],
-    "finding": "On RULER the proportional axis is approximately correct and the absolute axis is badly wrong, the opposite of the synthetic diagnostic. The correct budget axis is a property of the task, so no general claim is made; every quoted budget must state its axis and context length."
+    "finding": "On RULER the proportional axis is approximately correct and the absolute axis is badly wrong, the opposite of the synthetic diagnostic. The correct budget axis is a property of the task, so no general claim is made; every quoted budget must state its axis and context length.",
+    "hypothesis_tested_and_rejected": {
+      "source_log": "results/attention_spread.json",
+      "hypothesis": "RULER's relevant attention mass spreads proportionally with context while the diagnostic's stays concentrated.",
+      "result": "Rejected. Over an 8x context increase, entries covering 90% of the final query position's attention grow 0.99x (needle) and 1.34x (RULER), not ~8x. Both tasks concentrate on a few dozen entries.",
+      "not_excluded": "Measured at the final query position; SnapKV scores over the summed 32-token observation window, so a spread effect in the policy's own scoring signal remains untested.",
+      "mechanism": "unexplained"
+    }
   },
   "distractor_retrieval_cost": {
     "source_logs": [

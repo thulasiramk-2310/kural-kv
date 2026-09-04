@@ -366,13 +366,33 @@ score. Matched on percentage they agree to within 0.08, and at the larger budget
 to within 0.01. On RULER the proportional axis is approximately correct and the
 absolute axis is badly wrong — the opposite of the diagnostic task.
 
-The likely mechanism is that the synthetic needle names a city that occurs
-nowhere else in the prompt, so the query localises onto one entry and a fixed
-number of entries suffices however much filler surrounds it. RULER's key is an
-adjective-noun pair against a homogeneous haystack, with the phrase "special
-magic numbers" recurring in the instruction, so the relevant attention mass is
-spread and a fixed absolute budget captures a smaller share of it as context
-grows. That explanation is untested and is offered as a hypothesis, not a result.
+A query-localisation mechanism was proposed for this: that the synthetic needle
+names a city occurring nowhere else, so the query concentrates on a fixed set of
+entries at any context, whereas RULER's adjective-noun key against a homogeneous
+haystack spreads the relevant mass proportionally. **It was tested and it is
+wrong** (`scripts/attention_spread.py`, `results/attention_spread.json`).
+
+Attention of the final prompt position over all keys, reduced within each GQA
+group, entries needed to cover 50% and 90% of the mass, n=6:
+
+| task | context | k50 | k90 |
+|---|---|---|---|
+| needle | 2048 | 2 | 20 |
+| needle | 16384 | 3 | 20 |
+| ruler niah_single_1 | 2048 | 2 | 26 |
+| ruler niah_single_1 | 16384 | 2 | 35 |
+
+Across an eightfold context increase, k90 grows by 0.99x on the diagnostic and
+1.34x on RULER. Proportional spreading would predict roughly 8x. **Both tasks
+concentrate attention on a few dozen entries regardless of context**, so the
+difference in budget axis is not explained by where the query attends.
+
+The measurement is of the final query position, which is what the hypothesis
+concerned; SnapKV scores over the summed 32-token observation window, a related
+but distinct quantity, so a spread effect in the policy's own signal is not
+excluded. The mechanism remains unexplained, and no explanation is asserted in
+its place. The empirical finding stands on its own: the correct budget axis is
+task-dependent, and this repository does not yet know why.
 
 Two things follow. **No general claim is made about which axis is correct.** It
 is a property of the task, and any result quoting a budget must say which axis it
