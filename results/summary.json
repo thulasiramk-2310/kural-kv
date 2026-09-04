@@ -248,10 +248,25 @@
     ],
     "finding": "On RULER the proportional axis is approximately correct and the absolute axis is badly wrong, the opposite of the synthetic diagnostic. The correct budget axis is a property of the task, so no general claim is made; every quoted budget must state its axis and context length.",
     "hypothesis_tested_and_rejected": {
-      "source_log": "results/attention_spread.json",
-      "hypothesis": "RULER's relevant attention mass spreads proportionally with context while the diagnostic's stays concentrated.",
-      "result": "Rejected. Over an 8x context increase, entries covering 90% of the final query position's attention grow 0.99x (needle) and 1.34x (RULER), not ~8x. Both tasks concentrate on a few dozen entries.",
-      "not_excluded": "Measured at the final query position; SnapKV scores over the summed 32-token observation window, so a spread effect in the policy's own scoring signal remains untested.",
+      "source_logs": [
+        "results/spread_needle_2048.json",
+        "results/spread_needle_16384.json",
+        "results/spread_ruler_2k.json",
+        "results/spread_ruler_16k.json"
+      ],
+      "signal": "summed 32-token observation window scores, group-reduced -- the signal SnapKV ranks on (via prefill_with_scores)",
+      "k90_entries": {
+        "needle_2048": 183,
+        "needle_16384": 621,
+        "ruler_2048": 56,
+        "ruler_16384": 76
+      },
+      "k90_growth_over_8x_context": {
+        "needle": 3.39,
+        "ruler": 1.36
+      },
+      "result": "Rejected, and inverted. The diagnostic follows the ABSOLUTE axis yet its scoring mass spreads 3.39x; RULER follows the PROPORTIONAL axis yet stays concentrated at 1.36x. Score concentration does not explain the axis difference in either direction.",
+      "superseded": "An earlier version measured the final query position instead (growth 0.99x and 1.34x). It rejected the hypothesis against a signal the policy does not use.",
       "mechanism": "unexplained"
     }
   },

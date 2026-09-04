@@ -370,29 +370,41 @@ A query-localisation mechanism was proposed for this: that the synthetic needle
 names a city occurring nowhere else, so the query concentrates on a fixed set of
 entries at any context, whereas RULER's adjective-noun key against a homogeneous
 haystack spreads the relevant mass proportionally. **It was tested and it is
-wrong** (`scripts/attention_spread.py`, `results/attention_spread.json`).
+wrong.**
 
-Attention of the final prompt position over all keys, reduced within each GQA
-group, entries needed to cover 50% and 90% of the mass, n=6:
+The measurement is taken from the scores `prefill_with_scores` produces — the
+summed 32-token observation window, reduced over the GQA group — because that is
+the signal SnapKV ranks on. Entries needed to cover 50% and 90% of that mass,
+median over layers, heads and 6 samples:
 
-| task | context | k50 | k90 |
-|---|---|---|---|
-| needle | 2048 | 2 | 20 |
-| needle | 16384 | 3 | 20 |
-| ruler niah_single_1 | 2048 | 2 | 26 |
-| ruler niah_single_1 | 16384 | 2 | 35 |
+| task | context | k50 | k90 | k90 as % of context |
+|---|---|---|---|---|
+| synthetic needle | 2048 | 5 | 183 | 8.92% |
+| synthetic needle | 16384 | 5 | 621 | 3.79% |
+| ruler niah_single_1 | 2048 | 7 | 56 | 2.71% |
+| ruler niah_single_1 | 16384 | 8 | 76 | 0.46% |
 
-Across an eightfold context increase, k90 grows by 0.99x on the diagnostic and
-1.34x on RULER. Proportional spreading would predict roughly 8x. **Both tasks
-concentrate attention on a few dozen entries regardless of context**, so the
-difference in budget axis is not explained by where the query attends.
+Across an eightfold context increase k90 grows 3.39x on the diagnostic and 1.36x
+on RULER; proportional spreading would predict roughly 8x for the task following
+the proportional axis. The result is not merely negative, it is inverted: the
+diagnostic, which follows the **absolute** axis, is the task whose scoring mass
+spreads with context, while RULER, which follows the **proportional** axis, stays
+concentrated. Concentration of the policy's own scoring signal does not explain
+the axis difference in either direction.
 
-The measurement is of the final query position, which is what the hypothesis
-concerned; SnapKV scores over the summed 32-token observation window, a related
-but distinct quantity, so a spread effect in the policy's own signal is not
-excluded. The mechanism remains unexplained, and no explanation is asserted in
-its place. The empirical finding stands on its own: the correct budget axis is
-task-dependent, and this repository does not yet know why.
+Nor does k90 predict where a task's budget transition sits. The diagnostic's k90
+at 2048 is 183 against a transition at 181 entries, which looks like a match, but
+at 16384 its k90 is 621 while the transition stays near 181. RULER's k90 at 16384
+is 76 while it needs roughly 2900 entries to recover 0.80. The apparent agreement
+at one point is coincidence.
+
+**Superseded measurement.** An earlier version of this test used the attention of
+the final prompt position rather than the observation-window scores, and reported
+k90 growth of 0.99x and 1.34x. It rejected the hypothesis too, but against a
+signal the policy does not use, so it was a rejection of a claim nobody was
+making. It is recorded here because the correction matters: a finding resting on
+the wrong measurement is the same class of error as the retracted absolute-budget
+result, clean and reproducible and about something other than what it claims.
 
 Two things follow. **No general claim is made about which axis is correct.** It
 is a property of the task, and any result quoting a budget must say which axis it
@@ -400,6 +412,11 @@ was measured on and at what context length. And **the synthetic needle's
 behaviour does not transfer to RULER**, which is the clearest possible argument
 for why it is a diagnostic and not a benchmark: it was giving a clean, stable,
 reproducible answer to a question, and the answer was specific to itself.
+
+The mechanism remains unexplained. The next measurement that does not depend on
+any hypothesis about attention is whether the target's own entries survive
+selection at each context: that distinguishes a ranking failure from a budget
+failure directly.
 
 The grid remains absolute — 32, 45, 64, 91, 128, 181, 256, 362, 512, 1024 — with
 percentage-matched points added when contexts are compared, since neither axis

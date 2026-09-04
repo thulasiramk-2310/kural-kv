@@ -197,6 +197,31 @@ def prefill_with_scores(model, ids, chunk, window, device):
     return cache, scores, out.logits, cache.get_seq_length()
 
 
+def score_concentration(scores, kv_heads, mode, fracs=(0.5, 0.9)):
+    """Entries needed to cover each fraction of SnapKV's own scoring mass.
+
+    Deliberately computed from the scores `prefill_with_scores` produces -- the
+    summed observation-window attention, reduced over the GQA group -- because
+    that is the signal the policy ranks on. An earlier version of this
+    measurement used the attention of the final prompt position instead, which is
+    a related but different quantity, and a hypothesis about why the policy
+    behaves differently across tasks has to be tested against the signal the
+    policy actually uses.
+
+    Returns the median over layers and KV heads.
+    """
+    import statistics as _st
+    out = {f: [] for f in fracs}
+    for layer_scores in scores:
+        a = reduce_group(layer_scores, kv_heads, mode).float()
+        a = a / a.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+        srt, _ = a.sort(dim=-1, descending=True)
+        cum = srt.cumsum(dim=-1)
+        for f in fracs:
+            out[f] += ((cum < f).sum(dim=-1) + 1).tolist()
+    return {f: _st.median(v) for f, v in out.items()}
+
+
 def reduce_group(s, kv_heads, mode):
     """Collapse per-query-head scores onto their shared KV entry.
 
@@ -353,6 +378,10 @@ def main():
                          "their shared KV entry. Re-runnable against an existing "
                          "prefill cache, since scores are stored per query head")
     ap.add_argument("--pool-kernel", type=int, default=7)
+    ap.add_argument("--measure-spread", action="store_true",
+                    help="report how many entries hold 50%% and 90%% of SnapKV's "
+                         "scoring mass, then skip the policies. Tests the budget-"
+                         "axis hypothesis against the signal the policy ranks on")
     ap.add_argument("--timing-warmup", type=int, default=1,
                     help="leading samples discarded from timing stats PER "
                          "CONFIGURATION, since each config re-warms its own kernels")
@@ -408,7 +437,7 @@ def main():
           f"group_reduce={args.group_reduce}  "
           f"cache={'on' if args.cache_dir else 'off'}\n")
 
-    rows, hits, misses = [], 0, 0
+    rows, spread, hits, misses = [], [], 0, 0
     for n in range(n_samples):
         seed = args.seed + n
         sample = task.sample(n, device)
@@ -432,6 +461,20 @@ def main():
             if path is not None and not args.no_cache_write:
                 save_prefill(path, cache, scores, first_id, prompt_len, identity)
         prefill_s = time.perf_counter() - t0
+
+        if args.measure_spread:
+            kvh = model.config.num_key_value_heads
+            c = score_concentration(scores, kvh, args.group_reduce)
+            spread.append({"sample": n, "prompt_len": prompt_len,
+                           "k50": c[0.5], "k90": c[0.9],
+                           "k50_fraction": round(c[0.5] / prompt_len, 6),
+                           "k90_fraction": round(c[0.9] / prompt_len, 6)})
+            sprint(f"  s{n} prompt {prompt_len:>6}  k50 {c[0.5]:>6.0f} "
+                   f"({c[0.5]/prompt_len:>7.4%})  k90 {c[0.9]:>6.0f} "
+                   f"({c[0.9]/prompt_len:>7.4%})")
+            del cache, scores
+            torch.cuda.empty_cache()
+            continue
 
         first = torch.tensor(first_id, device=device)
         before = cache_signature(cache)
@@ -492,6 +535,25 @@ def main():
             del evicted
         del cache, scores
         torch.cuda.empty_cache()
+
+    if args.measure_spread:
+        import statistics as _st
+        med = {k: _st.median([r[k] for r in spread])
+               for k in ("k50", "k90", "k50_fraction", "k90_fraction")}
+        print(f"\nmedian over {len(spread)} samples: "
+              f"k50 {med['k50']:.0f} ({med['k50_fraction']:.4%})  "
+              f"k90 {med['k90']:.0f} ({med['k90_fraction']:.4%})")
+        payload = {"run": {"timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                           "task": args.task, "context": args.context,
+                           "measures": "entries covering 50%/90% of SnapKV's "
+                                       "group-reduced observation-window scores"},
+                   "config": {k: (str(v) if isinstance(v, Path) else v)
+                              for k, v in vars(args).items()},
+                   "median": med, "rows": spread}
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Logged to {args.out}")
+        return
 
     summary = {}
     for key in dict.fromkeys((r["policy"], r["budget_label"]) for r in rows):
