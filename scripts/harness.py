@@ -31,6 +31,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 from gate_check import DTYPES, MODEL_ID, decode
+from longbench import LongBenchTask
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -78,6 +79,34 @@ def build_sample(tokenizer, context_len, seed, device):
     ids = tokenizer(text, return_tensors="pt").input_ids[:, -context_len:].to(device)
     return {"input_ids": ids, "code": code, "city": city,
             "depth": round(depth, 3), "seed": seed}
+
+
+class NeedleTask:
+    """The synthetic needle, wrapped to match the LongBench task interface.
+
+    A diagnostic, not a reported benchmark: the prompt is built here, so no
+    number from it is comparable to a published one. It is kept because its
+    grader is exact, which is what makes a broken pipeline unambiguous.
+    """
+
+    name = "needle"
+    metric_name = "exact"
+    max_gen = 16
+
+    def __init__(self, tokenizer, context_len, seed):
+        self.tok, self.context_len, self.seed = tokenizer, context_len, seed
+
+    def __len__(self):
+        return 10 ** 9      # generated on demand
+
+    def sample(self, i, device):
+        s = build_sample(self.tok, self.context_len, self.seed + i, device)
+        return {"input_ids": s["input_ids"], "reference": s["code"],
+                "max_gen": self.max_gen, "id": "needle-%d" % s["seed"],
+                "meta": {"depth": s["depth"]}}
+
+    def score(self, text, reference):
+        return 1.0 if reference in text else 0.0
 
 
 def truncate_at_stop(tokens, stop_ids):
@@ -198,9 +227,10 @@ def cache_signature(cache):
              float(l.values.float().sum())) for l in cache.layers]
 
 
-def prefill_cache_path(cache_dir, model_id, dtype, context, window, chunk, seed):
+def prefill_cache_path(cache_dir, model_id, dtype, task, context, window, chunk, seed):
     tag = model_id.replace("/", "__")
-    return Path(cache_dir) / f"{tag}_{dtype}_ctx{context}_w{window}_c{chunk}_s{seed}.pt"
+    tsk = task.replace(":", "-")
+    return Path(cache_dir) / f"{tag}_{dtype}_{tsk}_ctx{context}_w{window}_c{chunk}_s{seed}.pt"
 
 
 def save_prefill(path, cache, scores, first, prompt_len, identity):
@@ -283,7 +313,15 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model-id", default=MODEL_ID)
     ap.add_argument("--dtype", choices=sorted(DTYPES), default="bf16")
+    ap.add_argument("--task", default="needle",
+                    help="'needle' (synthetic diagnostic) or 'longbench:<task>', "
+                         "e.g. longbench:multifieldqa_en")
     ap.add_argument("--context", type=int, default=4096)
+    ap.add_argument("--min-natural-tokens", type=int, default=0,
+                    help="LongBench only: keep documents whose untruncated prompt "
+                         "is at least this long. Set to the largest context under "
+                         "comparison so every sample saturates every context, "
+                         "otherwise context length is confounded with document length")
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--policies", nargs="+", default=["full", "snapkv"])
     ap.add_argument("--budget-fractions", type=float, nargs="+", default=[0.5],
@@ -305,7 +343,9 @@ def main():
                     help="leading samples discarded from timing stats PER "
                          "CONFIGURATION, since each config re-warms its own kernels")
     ap.add_argument("--prefill-chunk", type=int, default=128)
-    ap.add_argument("--decode-tokens", type=int, default=24)
+    ap.add_argument("--decode-tokens", type=int, default=0,
+                    help="0 uses the task's own generation length "
+                         "(LongBench specifies one per task)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--cache-dir", type=Path, default=None,
                     help="reuse prefills across runs; built on first miss")
@@ -327,21 +367,38 @@ def main():
                             tok.convert_tokens_to_ids("<|im_end|>"),
                             tok.convert_tokens_to_ids("<|endoftext|>"))
                 if isinstance(i, int) and i >= 0}
+    # The task is part of the cache identity: a different task is a different
+    # prompt, so reusing a cache across tasks would silently evaluate the wrong
+    # text.
+    if args.task.startswith("longbench:"):
+        task = LongBenchTask(args.task.split(":", 1)[1], args.context, tok,
+                             min_natural_tokens=args.min_natural_tokens)
+    elif args.task == "needle":
+        task = NeedleTask(tok, args.context, args.seed)
+    else:
+        raise SystemExit("unknown task %r" % args.task)
+    n_samples = min(args.samples, len(task))
+    if n_samples < args.samples:
+        print("note: task has only %d samples; running %d" % (len(task), n_samples))
+    decode_tokens = args.decode_tokens or task.max_gen
     identity = {"model_id": args.model_id, "dtype": args.dtype,
-                "context": args.context, "window": args.window,
-                "prefill_chunk": args.prefill_chunk}
-    print(f"{args.model_id}  {args.dtype}  ctx={args.context}  "
+                "task": args.task, "context": args.context,
+                "min_natural_tokens": args.min_natural_tokens,
+                "window": args.window, "prefill_chunk": args.prefill_chunk}
+    print(f"{args.model_id}  {args.dtype}  task={args.task} "
+          f"({task.metric_name}, gen={decode_tokens})  ctx={args.context}  "
           f"budgets={args.budget_tokens or args.budget_fractions}  "
           f"window={args.window}  "
           f"group_reduce={args.group_reduce}  "
           f"cache={'on' if args.cache_dir else 'off'}\n")
 
     rows, hits, misses = [], 0, 0
-    for n in range(args.samples):
+    for n in range(n_samples):
         seed = args.seed + n
-        sample = build_sample(tok, args.context, seed, device)
+        sample = task.sample(n, device)
         path = (prefill_cache_path(args.cache_dir, args.model_id, args.dtype,
-                                   args.context, args.window, args.prefill_chunk, seed)
+                                   args.task, args.context, args.window,
+                                   args.prefill_chunk, seed)
                 if args.cache_dir else None)
 
         t0 = time.perf_counter()
@@ -387,7 +444,7 @@ def main():
                 # Read before decode: decoding appends, so reading afterwards
                 # reports budget + decode_tokens.
                 kept = evicted.layers[0].keys.shape[2]
-                produced, _ = decode(model, evicted, first, args.decode_tokens,
+                produced, _ = decode(model, evicted, first, decode_tokens,
                                      device, start_position=next_pos)
             torch.cuda.synchronize()
             total_s = time.perf_counter() - t1
@@ -399,8 +456,10 @@ def main():
             # `first` comes from the prefill logits and is part of the answer.
             produced = truncate_at_stop([first_id] + produced, stop_ids)
             text = tok.decode(produced, skip_special_tokens=True)
+            score = task.score(text, sample["reference"])
             rows.append({
-                "sample": n, "seed": seed, "depth": sample["depth"],
+                "sample": n, "seed": seed, "id": sample["id"],
+                "meta": sample.get("meta"),
                 "policy": name, "budget_label": blabel, "budget": budget,
                 "group_reduce": args.group_reduce,
                 "prefill_source": source, "prefill_seconds": round(prefill_s, 4),
@@ -408,12 +467,12 @@ def main():
                 "kept_fraction": round(kept / prompt_len, 4),
                 "selection_seconds": round(select_s, 4),   # latency includes selection
                 "total_seconds": round(total_s, 4),
-                "correct": grade(text, sample["code"]),
-                "expected": sample["code"], "generated": text.strip()[:120],
+                "score": round(score, 4), "correct": score >= 1.0,
+                "expected": sample["reference"], "generated": text.strip()[:160],
             })
             print(f"  s{n} {name:<7}{blabel:>7} [{source:>5}] kept {kept:>6}"
                   f" ({kept/prompt_len:>6.2%})  "
-                  f"{'HIT ' if rows[-1]['correct'] else 'miss'}  {text.strip()[:34]!r}")
+                  f"{score:>5.2f}  {text.strip()[:34]!r}")
             del evicted
         del cache, scores
         torch.cuda.empty_cache()
@@ -424,23 +483,24 @@ def main():
         summary[f"{key[0]}@{key[1]}"] = {
             "policy": key[0], "budget_label": key[1], "n": len(sel),
             "mean_kept": round(sum(r["kept"] for r in sel) / len(sel), 1),
-            "accuracy": round(sum(r["correct"] for r in sel) / len(sel), 4),
+            "score": round(sum(r["score"] for r in sel) / len(sel), 4),
             "mean_kept_fraction": round(sum(r["kept_fraction"] for r in sel) / len(sel), 4),
             # Warmup discarded per configuration, not per run: each config
             # re-warms its own kernels, so the first sample of every one is slow.
             **pctiles([r["selection_seconds"] for r in sel][args.timing_warmup:]),
         }
-    print("\npolicy   budget      kept    kept%   n  accuracy   sel p50 / p10-p90 ms")
+    print(f"\npolicy   budget      kept    kept%   n  {task.metric_name:>8}   sel p50 / p10-p90 ms")
     for v in summary.values():
         t = (f"{v['sel_p50_ms']:>6.1f} / {v['sel_p10_ms']:.1f}-{v['sel_p90_ms']:.1f}"
              if v.get("sel_p50_ms") is not None else "   n/a")
         print(f"{v['policy']:<8} {v['budget_label']:>7}  {v['mean_kept']:>8.0f} "
-              f"{v['mean_kept_fraction']:>7.2%} {v['n']:>3}  {v['accuracy']:>7.2f}   {t}")
+              f"{v['mean_kept_fraction']:>7.2%} {v['n']:>3}  {v['score']:>8.3f}   {t}")
     print(f"prefill cache: {hits} hit, {misses} miss")
 
     payload = {
         "run": {"timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                "task": "needle_in_haystack", "grading": "exact substring match",
+                "task": args.task, "metric": task.metric_name,
+                "decode_tokens": decode_tokens,
                 "prefill_cache_hits": hits, "prefill_cache_misses": misses},
         "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
         "summary": summary, "rows": rows,
