@@ -146,13 +146,32 @@ def main():
     exponent = fit_exponent([r["context_length"] for r in rows],
                             [r["median_seconds"] for r in rows])
     max_drift = max(r["resident_drift_gib"] for r in rows)
-    verdict = ("attention-bound (near-quadratic): prefill dominates, caching is mandatory"
-               if exponent and exponent >= 1.6 else
-               "near-linear: earlier superlinearity was largely allocator thrash"
-               if exponent and exponent <= 1.3 else
-               "between linear and quadratic")
 
-    print(f"\nscaling exponent (log-log fit): {exponent:.3f}" if exponent else "")
+    # The global fit is not the signal. At small contexts prefill is dominated by
+    # fixed per-chunk overhead, and the smaller the chunk the more chunks there
+    # are, so the low end drags the global fit toward linear regardless of how
+    # the attention term is actually growing. The exponent at the TOP of the
+    # measured range is what says whether attention is taking over; the global
+    # fit is reported for reference only.
+    top_exponent = None
+    if len(rows) >= 2:
+        a, b = rows[-2], rows[-1]
+        top_exponent = (math.log(b["median_seconds"] / a["median_seconds"])
+                        / math.log(b["context_length"] / a["context_length"]))
+
+    e = top_exponent if top_exponent is not None else exponent
+    verdict = ("attention-bound (near-quadratic): prefill dominates, caching is mandatory"
+               if e and e >= 1.6 else
+               "near-linear: earlier superlinearity was largely allocator thrash"
+               if e and e <= 1.3 else
+               "between linear and quadratic, trending toward attention-bound")
+
+    if exponent:
+        print(f"\nglobal log-log fit: {exponent:.3f}  "
+              f"(reference only: per-chunk overhead flattens the low end)")
+    if top_exponent:
+        print(f"local exponent at top of range "
+              f"({rows[-2]['context_length']}->{rows[-1]['context_length']}): {top_exponent:.3f}")
     print(f"verdict: {verdict}")
     print(f"max resident drift across repeats: {max_drift} GiB "
           f"({'flat, no leak' if max_drift <= 0.05 else 'CLIMBING -- investigate before trusting timings'})")
@@ -160,7 +179,8 @@ def main():
     payload = {
         "run": {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "scaling_exponent": round(exponent, 4) if exponent else None,
+            "scaling_exponent_global": round(exponent, 4) if exponent else None,
+            "scaling_exponent_top_of_range": round(top_exponent, 4) if top_exponent else None,
             "verdict": verdict,
             "max_resident_drift_gib": max_drift,
         },

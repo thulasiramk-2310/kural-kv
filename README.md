@@ -151,41 +151,63 @@ model from a broken one, which is precisely how this defect stayed hidden.
 
 ## Prefill cost
 
-Measured on the primary arm, bf16, `prefill_chunk=512`, warm weights, one
+Measured on the primary arm, bf16, **`prefill_chunk=128`**, warm weights, one
 discarded warmup iteration and three timed repeats per length
 (`scripts/prefill_timing.py`, `results/prefill_timing.json`):
 
 | context | median | ratio vs previous | local exponent | peak GiB |
 |---|---|---|---|---|
-| 1024 | 0.220s | — | — | 2.98 |
-| 2048 | 0.518s | 2.36x | 1.24 | 3.08 |
-| 4096 | 1.343s | 2.59x | 1.37 | 3.27 |
-| 8192 | 3.899s | 2.90x | 1.54 | 3.64 |
+| 1024 | 0.339s | — | — | 2.93 |
+| 2048 | 0.568s | 1.68x | 0.75 | 2.98 |
+| 4096 | 1.365s | 2.40x | 1.26 | 3.08 |
+| 8192 | 3.969s | 2.91x | 1.54 | 3.27 |
+| 16384 | 13.316s | 3.36x | **1.75** | 3.65 |
 
-Overall log-log fit is **1.38**, but the local exponent rises monotonically with
-context — 1.24, 1.37, 1.54 — which is the expected signature of quadratic
-attention overtaking the linear per-token work as the sequence grows. Prefill is
-heading toward quadratic without having reached it in the measured range.
+**Prefill is attention-bound at the top of the range.** The local exponent rises
+monotonically to 1.75 across 8K→16K, which is the quadratic attention term
+overtaking the linear per-token work. Prefill caching is therefore mandatory, not
+an optimisation.
 
-Repeat spread is under 2.5% and resident allocation between repeats is flat to
-0.008 GiB, so these are prefill cost and not allocator behaviour. The first
-iteration at 1024 runs 5.6x slower than the rest, which is why a warmup
-iteration is discarded rather than averaged in.
+The global log-log fit is 1.34 and is *not* the number to quote. At small
+contexts prefill is dominated by fixed per-chunk overhead, and the smaller the
+chunk the more chunks there are, so the low end drags the global fit toward
+linear regardless of how the attention term is growing. The exponent at the top
+of the measured range is the signal.
 
-**This supersedes the prefill timings in the gate-check log.** Those were taken
-while the same run was downloading weights, and the 49.3s recorded at 16K
-implied a 13x jump from 8K. Measured 4K to 8K is 2.90x, and the trend puts 16K
-an order of magnitude below that recorded figure. The gate-check timings should
-not be used for planning.
+Repeat spread is under 2% from 2K up, and resident allocation between repeats is
+flat to 0.008 GiB, so these are prefill cost and not allocator behaviour.
+
+**This supersedes the prefill timings in the gate-check log**, which were taken
+while that run was also downloading weights and was thrashing the allocator. It
+recorded 49.3s at 16K; the same context now measures 13.3s, 3.7x faster despite a
+four-times-smaller chunk.
+
+### 16K requires `--prefill-chunk 128`
+
+At 16384 tokens, `prefill_chunk` 512 and 256 both fail on this GPU — 512 with a
+driver-level `CUDA error: out of memory`, 256 with
+`CUBLAS_STATUS_EXECUTION_FAILED` — while `nvidia-smi` reports ~7.6 GiB free. The
+failure is not exhaustion. The eager score matrix is the largest single
+allocation in the run, and the allocator cannot obtain a contiguous block of that
+size even though the total is available.
+
+`expandable_segments:True` does not fix it, which places the fragmentation below
+PyTorch's caching allocator rather than inside it. Halving the chunk quarters the
+score matrix, and 128 clears it: verified over three in-process repeats and three
+independent cold processes, six of six, with peak allocation of 3.65 GiB — lower
+than the 4.597 GiB the failing chunk-512 configuration reached.
+
+So 16K is reliable, not "16K sometimes", but only at chunk 128. Benchmarks in
+this repository fix the chunk at 128 for the whole sweep so the range is
+uniformly reachable.
 
 ## Planned: prefill caching
 
 One prefill per (model, context, sample) serves every method and every budget,
 because prefill produces the full KV cache and each policy then reduces that same
 cache. A 25-configuration sweep collapses to one prefill pass plus 25 cheap
-decodes — roughly a 25x saving on the prefill component. At the measured 3.9s per
-8K prefill this is worth having, but it is not the difference between days and
-weeks that the contaminated gate-check timings implied. At 0.44 GiB per 16K sample, 100 samples is ~44 GB — affordable against
+decodes. At 13.3s per 16K prefill and an exponent of 1.75, prefill is the
+dominant cost of any sweep that does not cache it. At 0.44 GiB per 16K sample, 100 samples is ~44 GB — affordable against
 200 GB if deleted per task. Cache K and V as stored; never cache attentions,
 which are recomputable and enormous.
 

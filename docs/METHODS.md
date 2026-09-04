@@ -75,6 +75,15 @@ single-shot long prefill does not fit in 8GB. Long contexts are prefilled in
 chunks. K and V are projections of the hidden states, so the resulting cache is
 bit-identical to a single-shot prefill; only peak activation differs.
 
+**`prefill_chunk` is 128 throughout.** At 16384 tokens, chunk sizes of 512 and
+256 both fail on this GPU with allocation errors despite roughly 7.6 GiB
+reported free — the score matrix is the largest single allocation and no
+contiguous block of that size is obtainable. `expandable_segments:True` does not
+help, placing the fragmentation below PyTorch's caching allocator. Chunk 128
+clears it reliably (six of six across in-process repeats and cold processes) at
+3.65 GiB peak. The chunk is held fixed across every context length so that
+measured curves reflect context scaling rather than chunk-size effects.
+
 ## Context range
 
 **The primary arm is capped at 16K. This is a methods decision, not a memory
