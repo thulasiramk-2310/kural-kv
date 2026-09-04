@@ -104,6 +104,20 @@ sits between the linear and quadratic terms and creeps toward 2 as the attention
 term comes to dominate. A measured 1.75 across 8K→16K should be expected to rise
 further above 16K, and must not be treated as a converged value.
 
+## Budget floors from mandatory retained windows
+
+SnapKV always retains its observation window, so with the protocol's 32-token
+minimum the smallest coherent budget is 33 entries. Budgets below that are not
+merely unusual, they are undefined for the method: the window alone exceeds them.
+
+This is a property of any method with a mandatory retained region, and it is
+recorded here because it constrains comparison. A method that must retain a
+window cannot be compared against one that need not at budgets near the floor,
+because at 33 entries the first is spending its entire budget on a fixed region
+while the second is still selecting. Comparisons at very low budgets must either
+be restricted to methods with the same floor, or report the floor alongside the
+result. This will apply directly when PyramidKV and Ada-KV are added.
+
 ## Intra-group aggregation
 
 On MHA there is one index per head and each query head owns its KV outright. On
@@ -291,6 +305,29 @@ generation proportional, that contrast is a stronger result than either alone.
 Grid in use: 32, 45, 64, 91, 128, 181, 256, 362, 512, 1024 retained entries,
 log-spaced with resolution concentrated in the transition. (n=8; the two matched
 points that disagree across contexts differ by a single sample.)
+
+## Benchmarks
+
+**RULER is the reported retrieval benchmark.** It is generated from a config
+rather than downloaded, so the document scarcity that constrains a cross-context
+comparison on LongBench does not arise: any number of samples can be produced at
+any context length, and every sample saturates the context exactly. The needle
+string, prompt template, answer prefix, depth schedule and `string_match_all`
+metric are taken from the RULER sources and pinned under `configs/ruler/`.
+
+Implemented variants are those whose haystack needs no external corpus:
+`niah_single_1` (noise haystack), `niah_multikey_2` and `niah_multikey_3`
+(haystack composed of distractor needles). The `essay` variants additionally
+require the Paul Graham corpus and an NLTK tokeniser; requesting one raises
+rather than silently substituting a different haystack.
+
+The distractor-haystack variants matter because they close a loophole the
+synthetic diagnostic leaves open. When filler is repeated noise, a needle is
+lexically distinctive and a scoring policy can succeed by noticing that. When the
+filler is itself made of needles differing only in key and value, it cannot.
+
+**The synthetic needle remains a diagnostic only**, for the reasons recorded
+below. **LongBench is reported as a negative result**, not run as a sweep.
 
 ## Screening a task before running a sweep
 

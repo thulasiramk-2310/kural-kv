@@ -32,6 +32,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 from gate_check import DTYPES, MODEL_ID, decode
 from longbench import LongBenchTask
+from ruler import RulerTask
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -314,8 +315,8 @@ def main():
     ap.add_argument("--model-id", default=MODEL_ID)
     ap.add_argument("--dtype", choices=sorted(DTYPES), default="bf16")
     ap.add_argument("--task", default="needle",
-                    help="'needle' (synthetic diagnostic) or 'longbench:<task>', "
-                         "e.g. longbench:multifieldqa_en")
+                    help="'needle' (synthetic diagnostic), 'ruler:<variant>' "
+                         "(reported retrieval benchmark), or 'longbench:<task>'")
     ap.add_argument("--context", type=int, default=4096)
     ap.add_argument("--min-natural-tokens", type=int, default=0,
                     help="LongBench only: keep documents whose untruncated prompt "
@@ -373,6 +374,8 @@ def main():
     if args.task.startswith("longbench:"):
         task = LongBenchTask(args.task.split(":", 1)[1], args.context, tok,
                              min_natural_tokens=args.min_natural_tokens)
+    elif args.task.startswith("ruler:"):
+        task = RulerTask(args.task.split(":", 1)[1], args.context, tok, seed=args.seed)
     elif args.task == "needle":
         task = NeedleTask(tok, args.context, args.seed)
     else:
