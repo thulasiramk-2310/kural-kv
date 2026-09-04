@@ -104,6 +104,26 @@ uses its own length.
 Recorded because it is invisible until it fails and is not something the papers
 mention. Anyone reproducing a layer-varying budget method on this stack meets it.
 
+### A per-head mask must grow with the cache
+
+Ada-KV needs a per-head mask over the padded slots, which the shared mask cannot
+express, so it travels on the attention module and is applied by a registered
+attention function. (The registry is `ALL_ATTENTION_FUNCTIONS` in
+`transformers.modeling_utils`, with a `.register()` method, not a plain dict.)
+
+The trap is that the mask is built once at eviction and the cache **grows during
+decoding**: each step appends a real token that must not be masked. Sizing the
+mask to the evicted width produces a shape mismatch one step later, and the
+tempting fix -- truncating the attention weights to the mask -- would instead
+mask the model's own most recent token at every step. That fails silently and
+degrades generation for reasons invisible at this layer, the same shape of bug as
+the RoPE position defect above. The mask is therefore extended with `False` on
+the right to match whatever length attention presents.
+
+Both of these are v5 implementation traps rather than method details, and both
+cost real time to find. They are recorded because a reproduction that hits either
+one gets plausible output rather than an error.
+
 ## Reading a scaling exponent
 
 Prefill cost is fitted as log(time) against log(context), and **the exponent
