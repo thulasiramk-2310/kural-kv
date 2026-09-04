@@ -247,5 +247,25 @@
       }
     ],
     "finding": "On RULER the proportional axis is approximately correct and the absolute axis is badly wrong, the opposite of the synthetic diagnostic. The correct budget axis is a property of the task, so no general claim is made; every quoted budget must state its axis and context length."
+  },
+  "distractor_retrieval_cost": {
+    "source_logs": [
+      "results/ruler_16k_niah_multikey_2.json",
+      "results/ruler_16k_multikey2_high.json"
+    ],
+    "task": "RULER niah_multikey_2 (haystack built from distractor needles)",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "context": 16384,
+    "policy": "snapkv",
+    "n_per_point": 20,
+    "full_cache_score": 0.9,
+    "scores": {
+      "33-724 entries (0.20-4.42%)": 0.0,
+      "1024 (6.25%)": 0.0,
+      "2048 (12.50%)": 0.0,
+      "4096 (25.00%)": 0.0,
+      "8192 (50.01%)": 0.3
+    },
+    "finding": "Nothing survives below half the cache, and half the cache recovers only a third of the baseline. Published budgets in this literature are single-digit percentages, where this task returns zero."
   }
 }

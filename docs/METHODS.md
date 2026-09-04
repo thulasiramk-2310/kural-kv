@@ -104,6 +104,59 @@ sits between the linear and quadratic terms and creeps toward 2 as the attention
 term comes to dominate. A measured 1.75 across 8K→16K should be expected to rise
 further above 16K, and must not be treated as a converged value.
 
+## What distractor-rich retrieval costs
+
+RULER's `niah_multikey_2` builds its haystack from other needles, so the filler
+differs from the target only in key and value. A scoring policy cannot succeed by
+noticing that needles look unlike filler, which is the cue the noise haystack and
+the synthetic diagnostic both leave available.
+
+SnapKV on Qwen2.5-1.5B at 16384 context, n=20, against a 0.900 full-cache
+baseline:
+
+| retained | % of context | score |
+|---|---|---|
+| 33 – 724 | 0.20 – 4.42% | 0.000 |
+| 1024 | 6.25% | 0.000 |
+| 2048 | 12.50% | 0.000 |
+| 4096 | 25.00% | 0.000 |
+| 8192 | 50.01% | 0.300 |
+
+Nothing survives below half the cache, and half the cache recovers only a third
+of the baseline. The same variant at 2048 context is already at 0.000 by 33
+entries and reaches only 0.050 at 362.
+
+This bounds what the method delivers on retrieval where distractors resemble the
+target. Published budgets in this literature sit in the single-digit percentages;
+at those budgets this task returns zero. The number is reported because the
+distinction between "eviction preserves quality at 5% budget" and "eviction
+preserves quality at 5% budget on tasks whose targets are lexically distinctive"
+is the difference between a usable method and a benchmark artefact.
+
+## Comparing methods: equal total retained entries
+
+**Methods are compared at equal total retained KV entries, never at equal
+per-unit budgets.** This rule is fixed before the methods are implemented,
+because the units differ between them and choosing afterwards would be choosing
+the answer.
+
+SnapKV selects a single budget applied per KV head. PyramidKV allocates across
+layers on a schedule, so its budget is per layer and its floor is a per-layer
+floor whose total depends on that schedule. Ada-KV allocates across heads, which
+on this model means across two KV groups rather than the twelve query heads its
+paper assumes. Giving each method "budget B" means three different totals and
+three different memory footprints, and the comparison would then be measuring
+allocation arithmetic rather than policy quality.
+
+Total retained entries is the axis because it is what the study's headline metric
+is about: memory. Two methods retaining the same number of entries occupy the
+same cache, whatever internal distribution produced it.
+
+Both axes are reported for every configuration — absolute retained entries and
+retained fraction of context — because neither can be assumed to be the
+comparable one (see below). A quoted budget without its axis and its context
+length is not interpretable.
+
 ## Budget floors from mandatory retained windows
 
 SnapKV always retains its observation window, so with the protocol's 32-token
@@ -255,6 +308,16 @@ begins saving post-eviction states under a guarantee that was never exercised.
 Both paths are therefore checked.
 
 ## Tasks: what is diagnostic and what is reported
+
+**The methods lesson from this repository's own retraction.** The synthetic
+needle produced a clean, reproducible result that held across an eightfold change
+in context, and it was wrong — wrong in the sense that it was a property of the
+task rather than of eviction, and it did not replicate on RULER. It was never
+noisy or unstable. That is the more dangerous failure, because instability
+announces itself and a stable artefact does not. A study reporting it as a
+retrieval result would have shipped a confident false claim about the budget axis
+that the entire field reports on. The separation of diagnostic from benchmark is
+what caught it, and the cost of not separating them would have been the paper.
 
 The synthetic needle task in `scripts/harness.py` builds its own prompt — filler
 text, a five-digit code at a randomised depth, a question asking for it back —
