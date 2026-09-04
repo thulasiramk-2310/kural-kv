@@ -2,6 +2,9 @@
 
 Reproduction study of KV-cache eviction methods on small GQA models.
 
+The protocol every measurement is produced under is recorded in
+[docs/METHODS.md](docs/METHODS.md).
+
 ## Research question
 
 Published KV-cache eviction methods — Ada-KV, LKV, LU-KV — allocate cache budget
@@ -9,18 +12,19 @@ Published KV-cache eviction methods — Ada-KV, LKV, LU-KV — allocate cache bu
 that unit is well defined: every query head owns its own KV entries, so a per-head
 budget is directly actionable.
 
-Llama-3.2-1B is GQA. Eight KV heads serve thirty-two query heads, in groups of
-four. A KV entry is shared by every query head in its group, so evicting it
-removes it for all four at once. The unit of eviction is the group, not the head,
-and a query head cannot be given a budget different from its three groupmates.
+The small models this study runs are GQA. On Qwen2.5-1.5B, two KV heads serve
+twelve query heads, in groups of six. A KV entry is shared by every query head in
+its group, so evicting it removes it for all six at once. The unit of eviction is
+the group, not the head, and a query head cannot be given a budget different from
+its groupmates.
 
 Two consequences follow:
 
 1. Head-level budget allocation — reported in those papers as the dominant
    factor — does not straightforwardly exist on a GQA model. The mechanism the
    findings attribute their gains to has no direct analogue here.
-2. Within a group, the four query heads may disagree about which tokens matter.
-   An eviction that is cheap for one can be expensive for another, and a single
+2. Within a group, the query heads may disagree about which tokens matter. An
+   eviction that is cheap for one can be expensive for another, and a single
    group-level decision cannot satisfy both.
 
 On the primary arm, Qwen2.5-1.5B, that leaves **`budget_units: 2`** — twelve
@@ -57,9 +61,9 @@ gated and this project does not record numbers it has not read.
 
 ## Method
 
-- **Qwen2.5-1.5B-Instruct** — FP16, GQA. Primary arm. 4K–16K context.
+- **Qwen2.5-1.5B-Instruct** — bf16, GQA. Primary arm. 4K–16K context.
   12 query heads over 2 KV heads: group size 6, so 2 budget units.
-- **Llama-3.2-1B-Instruct** — FP16, GQA. Second arm, 4K–32K context.
+- **Llama-3.2-1B-Instruct** — fp16, GQA. Second arm, 4K–32K context.
   32 query heads over 8 KV heads: group size 4, so 8 budget units.
 - **Phi-3.5-mini** — 4-bit NF4, MHA. Contrast arm. 4K–12K context.
 
@@ -94,6 +98,9 @@ Attention is run with `attn_implementation="eager"` throughout, because fused
 kernels do not expose the attention scores the eviction policies score against.
 Scoring uses a 32–64 token observation window rather than the full attention
 matrix.
+
+Precision is 2 bytes per element; which 2-byte dtype is a per-model numerical
+choice, not a study parameter. See [docs/METHODS.md](docs/METHODS.md).
 
 All runs are on a single RTX 4060 laptop, 8GB VRAM. No cloud, no API models.
 
@@ -162,7 +169,7 @@ cache.
 Nothing is measured yet.
 
 `scripts/gate_check.py` verifies the environment assumptions the study rests on
-before any eviction code is written: CUDA and VRAM, an FP16 eager load pinned to
+before any eviction code is written: CUDA and VRAM, a 2-byte eager load pinned to
 GPU, attention scores actually returned, the 8-vs-32 head counts that make this a
 GQA study, eviction followed by continued decoding, and peak memory across
 context lengths. It writes `results/gate_check.json`.
