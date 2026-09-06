@@ -1,0 +1,23 @@
+# Versions this study was run under. They are pinned rather than ranged because
+# docs/METHODS.md documents version-specific failures: the transformers v5 mask
+# dispatch, the Cache API without __getitem__, and the Phi-3.5 LongRoPE
+# degeneration are all properties of these exact versions. A reproduction on
+# other versions may not hit the traps the protocol is written around.
+#
+# torch was installed from the CUDA 13.0 index:
+#   pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu130
+
+torch==2.13.0
+transformers==5.13.0
+accelerate==1.14.0
+huggingface-hub==1.20.1
+
+# 4-bit NF4 for the Phi contrast arm only.
+bitsandbytes==0.50.2
+
+# RULER generates adjective-noun keys from these word lists.
+wonderwords==3.0.1
+
+# LongBench only. Note: datasets>=5 cannot load THUDM/LongBench, which ships a
+# loading script; scripts/longbench.py reads the published data.zip directly.
+datasets==5.0.1

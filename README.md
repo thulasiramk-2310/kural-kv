@@ -10,6 +10,38 @@ null, or withdrawn — and the grades are part of the result. Two central findin
 carry held-out replications; one earlier claim is retracted and one arm is
 withdrawn, both retained in the record rather than removed.
 
+## Reproducing this
+
+```bash
+pip install -r requirements.txt          # versions are pinned; see the file for why
+python scripts/gate_check.py             # verifies the environment before anything else
+```
+
+The gate check must pass before any number means anything. It confirms CUDA and
+VRAM, a 2-byte eager load pinned to GPU 0, that attention scores are actually
+returned, the GQA head counts, that eviction preserves RoPE phase bitwise, and
+peak memory across context lengths.
+
+```bash
+# the reported benchmark: RULER, four policies, held-out seeds
+python scripts/harness.py --task ruler:niah_single_1 --context 16384     --samples 20 --seed 200 --prefill-chunk 128     --policies full snapkv pyramidkv adakv --budget-tokens 181 724 2900
+
+# does the answer's own entry survive selection?
+python scripts/harness.py --task ruler:niah_single_1 --context 16384     --samples 20 --measure-recall --budget-tokens 91 181 362
+
+# head-budget lever across models: config.json only, no weights, no GPU
+python scripts/budget_units.py
+```
+
+`--prefill-chunk 128` is not optional at 16K — larger chunks fail with
+allocation errors on 8GB. Runs refuse to write results if the full-cache
+baseline falls below `--min-baseline`, because a weak baseline measures the
+pipeline rather than the method. Both are explained in
+[docs/METHODS.md](docs/METHODS.md).
+
+Every run writes a JSON log to `results/`. Only `results/summary.json` is
+tracked; the per-run logs are gitignored and regenerable.
+
 ## What this study is asking
 
 It began as a transfer question: published eviction findings are established
