@@ -312,6 +312,43 @@ As recorded above, this overhead is a property of dense storage. Paged-attention
 implementations hold ragged per-head lengths natively and pay none of it, so the
 equal-stored penalty is a statement about this stack and not about the method.
 
+## Nothing is trained, and what that does and does not rule out
+
+No parameters are fit anywhere in this study. There is no optimizer, no backward
+pass, no fine-tuning; every model is used as published. **Overfitting in the
+training sense therefore cannot occur** — there is no fitted model that could
+memorise the evaluation data.
+
+The analogous risk is real and must not be waved away by that fact. Selecting a
+grid, a budget, a task or a variant *after looking at results*, and then
+reporting on the same samples, produces exactly the same failure with none of the
+same vocabulary. This repository has already caught itself doing versions of it
+twice: the post-hoc budget rule below, and the retracted absolute-budget claim
+that came from a task chosen because it discriminated well.
+
+**Every result in this repository was produced with `seed=0`**, so the same
+generated samples underlie the discrimination sweep that chose the budget grid,
+the method comparison reported on that grid, and the recall probes. There is no
+held-out set. That is a genuine limitation and is stated rather than mitigated by
+argument.
+
+What partially offsets it:
+
+- Predictions are recorded before the runs that test them, so a result cannot be
+  reinterpreted to fit afterwards.
+- Comparisons are paired: every method sees the identical documents, so document
+  difficulty is removed as a variance source rather than averaged over.
+- Resolution limits are stated with every result, so no single cell is presented
+  as a measured effect.
+- Any budget chosen after seeing the grid is labelled post hoc and reported
+  separately.
+
+What does not offset it, and what the fix is: a direction observed on one sample
+set is not established until it reappears on samples it was not chosen against.
+**A held-out replication on fresh seeds is required before any method-comparison
+direction is reported as a finding**, and results are marked as awaiting it until
+then.
+
 ## Targeted follow-ups are reported separately from the grid
 
 Where a sweep is underpowered, extra samples are spent at the budgets with the
