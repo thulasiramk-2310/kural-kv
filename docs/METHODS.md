@@ -280,13 +280,19 @@ downstream of selection and Ada-KV's dials only change what selection keeps.
 
 | budget | SnapKV | PyramidKV | Ada-KV | Pyr−Snap | Ada−Snap (equal allocated) | Ada stored | Ada−Snap (equal stored) |
 |---|---|---|---|---|---|---|---|
-| 181 | 0.250 | 0.200 | 0.350 | −0.050 | +0.100 | 209 (1.15x) | +0.092 |
-| 362 | 0.300 | 0.400 | 0.350 | +0.100 | +0.050 | 461 (1.27x) | −0.005 |
+| 181 | 0.250 | 0.200 | 0.300 | −0.050 | +0.050 | 209 (1.15x) | +0.042 |
+| 362 | 0.300 | 0.400 | 0.300 | +0.100 | +0.000 | 461 (1.27x) | −0.055 |
 | 630 | 0.450 | 0.500 | 0.300 | +0.050 | −0.150 | 851 (1.35x) | −0.144 |
 | 724 | 0.400 | 0.600 | 0.450 | +0.200 | +0.050 | 986 (1.36x) | −0.040 |
 | 1451 | 0.650 | 0.750 | 0.600 | +0.100 | −0.050 | 2035 (1.40x) | −0.110 |
 | 2900 | 0.800 | 0.850 | 0.850 | +0.050 | +0.050 | 4047 (1.40x) | +0.050 |
-| **mean** | | | | **+0.075** | **+0.008** | | **−0.026** |
+| **mean** | | | | **+0.075** | **−0.008** | | **−0.043** |
+
+These are the corrected numbers, re-measured after the mask-registration defect
+described above. SnapKV and PyramidKV reproduced **bit-identically** across the
+fix, because neither passes through the custom attention. Ada-KV's column moved
+slightly — its decode does pass through it — and moved from +0.008 to −0.008,
+across zero. The verdict is unchanged and marginally reinforced: flat.
 | **selection p50** | 8.0 ms | 7.9 ms | 23.5 ms | | | | |
 
 Both Ada-KV columns are reported because they answer different questions and
@@ -302,8 +308,8 @@ selection cost is likewise this implementation on this stack. What generalises
 from this arm is the *accuracy* result at equal allocated entries: reallocating
 across two KV groups does not help.
 
-**Ada-KV is flat**: mean +0.008 at equal allocated entries, with deltas swinging
-from −0.150 to +0.100 and signs mixed across the grid. **PyramidKV gains**:
+**Ada-KV is flat**: mean −0.008 at equal allocated entries, with deltas swinging
+from −0.150 to +0.050 and signs mixed across the grid (positive at 3 of 6). **PyramidKV gains**:
 positive at five of six budgets, mean +0.075. At 2048 context PyramidKV is level
 with SnapKV (means 0.663 vs 0.625 over the shared grid), so its advantage appears
 only at the longer context.

@@ -354,11 +354,11 @@
     "prediction_made_before_run": "Ada-KV shows little or no gain over SnapKV at matched entries at 16K, because the failure is downstream of selection.",
     "outcome": "Prediction holds (first of four pre-enumerated outcomes).",
     "mean_delta_vs_snapkv_equal_allocated": {
-      "adakv": 0.008,
+      "adakv": -0.008,
       "pyramidkv": 0.075
     },
     "mean_delta_vs_snapkv_equal_stored": {
-      "adakv": -0.026
+      "adakv": -0.043
     },
     "adakv_storage_overhead_by_budget": {
       "181": 1.153,
@@ -375,6 +375,8 @@
       "adakv": 23.5
     },
     "resolution": "n=20, one sample = 0.05. No individual cell is a measured effect; the supported claim is the consistency of sign, not any gap size.",
-    "pyramidkv_2k_vs_16k": "Level with SnapKV at 2048, positive at 5 of 6 budgets at 16384, from a schedule with no context term in it."
+    "pyramidkv_2k_vs_16k": "Level with SnapKV at 2048, positive at 5 of 6 budgets at 16384, from a schedule with no context term in it.",
+    "corrected_after_defect": "Re-measured after the mask-registration defect. SnapKV and PyramidKV reproduced bit-identically (they do not use the custom attention); Ada-KV moved from +0.008 to -0.008, across zero. Verdict unchanged.",
+    "withdrawn": "The Phi-3.5-mini MHA arm result was computed under the defect and has been withdrawn. Whether 'two dials' flattened Ada-KV is currently unknown."
   }
 }
