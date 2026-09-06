@@ -2,8 +2,13 @@
 
 Reproduction study of KV-cache eviction methods on small GQA models.
 
-The protocol every measurement is produced under is recorded in
-[docs/METHODS.md](docs/METHODS.md).
+**[Abstract](docs/ABSTRACT.md)** · **[Results](docs/RESULTS.md)** ·
+**[Methods protocol](docs/METHODS.md)**
+
+Findings are graded by what the evidence supports — established, suggestive,
+null, or withdrawn — and the grades are part of the result. Two central findings
+carry held-out replications; one earlier claim is retracted and one arm is
+withdrawn, both retained in the record rather than removed.
 
 ## What this study is asking
 
@@ -18,22 +23,22 @@ This repository now has a direct measurement saying that frame is incomplete:
 the answer's own entries survive selection at essentially the same rate at 2K and
 16K context, and the model can only use them at 2K.
 
-| budget | 2048 recall / accuracy | 16384 recall / accuracy |
-|---|---|---|
-| 181 entries | 0.830 / 0.800 | 0.793 / **0.250** |
-| 362 entries | 0.893 / 0.900 | 0.856 / **0.300** |
+| budget | 2048 recall / accuracy | 16384 recall / accuracy | Δ recall | Δ accuracy |
+|---|---|---|---|---|
+| 181 entries | 0.822 / 0.867 | 0.795 / **0.433** | 0.027 | **0.434** |
+| 362 entries | 0.898 / 0.900 | 0.861 / **0.350** | 0.037 | **0.550** |
 
-Selection recall differs by 0.037 where accuracy differs by 0.550. And within
-16K, raising the budget from 181 to 2900 entries buys 0.55 of accuracy while
-buying only 0.12 of target retention — so most of what a larger budget provides
-is not the answer's own keys.
+Measured on samples used for no selection of any kind, with recall reproducing to
+within 0.02 of the original measurement on every cell. And within 16K, raising
+the budget from 181 to 2900 entries buys 0.55 of accuracy while buying only 0.12
+of target retention — so most of what a larger budget provides is not the
+answer's own keys.
 
 So the question this repository is now answering is: **what actually governs
 eviction damage?** Keeping the important tokens is measurably not the whole of
 it. Three candidate mechanisms have been tested and rejected — query
 localisation, scoring-mass concentration, and key eviction — and the finding is
-reported without one, in
-[docs/METHODS.md](docs/METHODS.md).
+reported without one. Full findings in [docs/RESULTS.md](docs/RESULTS.md).
 
 ## Why GQA is the right setting for it
 
@@ -87,6 +92,11 @@ afterwards:
 The third row is the one that would be easiest to rationalise after the fact and
 hardest to justify, so it is written down with that noted.
 
+**Outcome: the first row.** Across 80 held-out samples, Ada-KV is flat
+(−0.005, 95% CI [−0.026, +0.016]) and PyramidKV gives a small real gain
+(+0.040, 95% CI [+0.004, +0.076]). The prediction held and the two allocation
+axes separate.
+
 ### How wide is the lever, across models
 
 Per-head budget allocation is only actionable per KV group, so the number of
@@ -113,14 +123,18 @@ gated and this project does not record numbers it has not read.
   12 query heads over 2 KV heads: group size 6, so 2 budget units.
 - **Llama-3.2-1B-Instruct** — fp16, GQA. Second arm, 4K–32K context.
   32 query heads over 8 KV heads: group size 4, so 8 budget units.
-- **Phi-3.5-mini** — 4-bit NF4, MHA. Contrast arm. 4K–12K context.
+- **Phi-3.5-mini** — 4-bit NF4, MHA. Contrast arm, **2K only** and currently
+  **withdrawn**: under transformers 5.13 it degenerates past position 4096, its
+  LongRoPE boundary, with logits still finite.
 
 Each model is compared only against its own full-cache baseline, never against
 another. The MHA arm exists to show what the same method does when per-head
 budgeting is genuinely available, not to produce a cross-model comparison.
 
-Two GQA arms at different group sizes, 6 and 4, are what let the study say
-anything about group width rather than about one model's quirks.
+Two GQA arms at different group sizes, 6 and 4, would let the study say something
+about group width rather than about one model's quirks. **In practice only the
+Qwen arm ran**: Llama-3.2-1B is gated, and the Phi arm is withdrawn. Every
+finding is single-model unless stated.
 
 ### Why the primary arm is capped at 16K
 

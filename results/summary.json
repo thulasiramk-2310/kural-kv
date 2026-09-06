@@ -413,5 +413,82 @@
       "finding": "PyramidKV's advantage more than halves on held-out samples and is not individually significant there; pooled it survives with a CI lower bound against zero. Suggestive, not established. Ada-KV's flatness replicates on both sets and IS established.",
       "caveat": "Only this one comparison has a held-out set. Every other result in the repository is seed=0 only."
     }
+  },
+  "FINAL": {
+    "note": "Headline figures as reported in docs/RESULTS.md. Held-out means samples used for no selection of any kind (seeds 100 and 200).",
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "dtype": "bf16",
+    "task": "RULER niah_single_1",
+    "context": 16384,
+    "finding_1_recall_vs_accuracy_heldout": {
+      "source_logs": [
+        "results/recall_2k_n60.json",
+        "results/recall_16k_n30.json",
+        "results/acc_2k_n60_seed200.json",
+        "results/methods_16k_n60_seed200.json"
+      ],
+      "n": {
+        "recall_2k": 58,
+        "recall_16k": 29,
+        "accuracy": 60
+      },
+      "budget_181": {
+        "recall_2k": 0.822,
+        "recall_16k": 0.795,
+        "accuracy_2k": 0.867,
+        "accuracy_16k": 0.433,
+        "delta_recall": 0.027,
+        "delta_accuracy": 0.434
+      },
+      "budget_362": {
+        "recall_2k": 0.898,
+        "recall_16k": 0.861,
+        "accuracy_2k": 0.9,
+        "accuracy_16k": 0.35,
+        "delta_recall": 0.037,
+        "delta_accuracy": 0.55
+      },
+      "status": "established",
+      "finding": "Selection recall is context-invariant; accuracy is not. Retaining a fact is not sufficient for using it.",
+      "skipped_samples": "2 of 60 at 2K: the answer string could not be located in the prompt, so they were skipped rather than scored as misses, which would have depressed recall."
+    },
+    "finding_2_allocation_heldout": {
+      "source_logs": [
+        "results/heldout_16k_seed100.json",
+        "results/methods_16k_n60_seed200.json"
+      ],
+      "unit_of_analysis": "sample (delta averaged over budgets within each sample)",
+      "pyramidkv_minus_snapkv": {
+        "n": 80,
+        "mean": 0.04,
+        "se": 0.0183,
+        "t": 2.19,
+        "ci95": [
+          0.0042,
+          0.0758
+        ]
+      },
+      "adakv_minus_snapkv": {
+        "n": 80,
+        "mean": -0.005,
+        "se": 0.0107,
+        "t": -0.47,
+        "ci95": [
+          -0.0259,
+          0.0159
+        ]
+      },
+      "status": {
+        "pyramidkv": "established, small",
+        "adakv": "null, bounded"
+      },
+      "finding": "Depth reallocation gives a small real gain; head reallocation gives nothing measurable, bounded below 0.026.",
+      "selection_contaminated_estimate": {
+        "pyramidkv": 0.075,
+        "note": "The seed-0 figure, roughly double the held-out one."
+      }
+    },
+    "withdrawn": "Phi-3.5-mini MHA arm (invalidated by the attention-mask defect). Whether 'two dials' flattened Ada-KV remains unknown.",
+    "retracted": "An earlier claim that retrieval follows an absolute budget axis generally. Measured on the synthetic diagnostic; did not replicate on RULER."
   }
 }
