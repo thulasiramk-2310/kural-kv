@@ -306,52 +306,53 @@ So 16K is reliable, not "16K sometimes", but only at chunk 128. Benchmarks in
 this repository fix the chunk at 128 for the whole sweep so the range is
 uniformly reachable.
 
-## Planned: prefill caching
+## Prefill caching
 
-One prefill per (model, context, sample) serves every method and every budget,
-because prefill produces the full KV cache and each policy then reduces that same
-cache. A 25-configuration sweep collapses to one prefill pass plus 25 cheap
-decodes. At 13.3s per 16K prefill and an exponent of 1.75, prefill is the
-dominant cost of any sweep that does not cache it. At 0.44 GiB per 16K sample, 100 samples is ~44 GB — affordable against
-200 GB if deleted per task. Cache K and V as stored; never cache attentions,
-which are recomputable and enormous.
+Implemented and verified. One prefill per (model, context, sample) serves every
+method and every budget, because prefill produces the full KV cache and each
+policy reduces that same cache. At 13.3s per 16K prefill against an exponent of
+1.75, prefill dominates any sweep that does not cache it; a cached entry loads in
+~2.2s, dominated by the host-to-device rebuild rather than the NVMe read.
 
-This is only valid for methods that score from the prompt alone. SnapKV
-qualifies, since its observation window is the prompt tail. H2O accumulates
-attention across decoding and needs live scores, so a cached prefill would
-silently benchmark something that is not H2O. Verify per method before reusing a
-cache.
+The round trip is checked rather than assumed. `scripts/cache_roundtrip_check.py`
+saves a cache, reloads it **in a fresh process**, and asserts a bitwise
+per-layer fingerprint plus exact equality of decoded token ids against a live
+prefill. Verified at 2048 and at 16384.
+
+Caches are transient: ~470 MiB per 16K sample, so a sweep writes tens of GB.
+Delete the cache directory once a sweep's JSON is written.
+
+Cached prefill is only valid for methods that score from the prompt alone.
+SnapKV qualifies, since its observation window is the prompt tail. A method that
+evicts *during* prefill never observes the full cache, and feeding it a cached
+one would silently benchmark a different algorithm.
 
 ## Status
 
-Nothing is measured yet.
+**Complete.** Measuring is finished; the findings are in
+[docs/RESULTS.md](docs/RESULTS.md), graded by what the evidence supports.
 
-`scripts/gate_check.py` verifies the environment assumptions the study rests on
-before any eviction code is written: CUDA and VRAM, a 2-byte eager load pinned to
-GPU, attention scores actually returned, the 8-vs-32 head counts that make this a
-GQA study, eviction followed by continued decoding, and peak memory across
-context lengths. It writes `results/gate_check.json`.
+| # | finding | status |
+|---|---|---|
+| 1 | Retaining a fact is not sufficient for using it | established |
+| 2 | Ada-KV (head axis) gives nothing, bounded below 0.026 | established |
+| 2 | PyramidKV (depth axis) gives a small real gain | established, small |
+| 3 | The correct budget axis is a property of the task | established for these tasks |
+| 4 | Distractor retrieval survives nothing below half the cache | established |
+| 5 | The head-budget lever shrinks 16x from MHA to GQA | established |
+| 6 | LongBench QA cannot measure eviction at this scale | null, with mechanism |
+| — | MHA contrast arm | **withdrawn** |
 
-```bash
-# Primary arm: Qwen2.5-1.5B-Instruct, 4K-16K
-python scripts/gate_check.py
+Findings 1 and 2 carry held-out replications at n = 29–80. One earlier claim —
+that retrieval follows an absolute budget axis generally — is **retracted**: it
+was measured on the synthetic diagnostic and did not replicate on RULER.
 
-# Llama arm, once access is granted: the only arm that goes to 32K
-python scripts/gate_check.py --model-id meta-llama/Llama-3.2-1B-Instruct \
-    --context-lengths 4096 8192 16384 32768
-```
-
-If the sweep OOMs, it is the eager score matrix during prefill, not the KV cache.
-Lower `--prefill-chunk` before changing anything else.
-
-Two constraints that gate check established and that any later script inherits:
-
-- Eager attention materialises a `[1, 32, q_len, kv_len]` score matrix, so a
-  single-shot long prefill will not fit in 8GB. Long contexts are prefilled in
-  chunks. The resulting cache is bit-identical; only peak activation differs.
-- RoPE is applied to K before it enters the cache, so surviving entries keep
-  non-contiguous original positions after an eviction. Continuation must be
-  indexed by original position, not by compacted cache length, or the gaps are
-  silently closed and quality degrades invisibly.
+**Not done, deliberately.** The Llama-3.2-1B arm never ran; the repo is gated
+and access was not granted. The MHA arm is withdrawn, so whether the narrowed
+two-dial lever is what flattened Ada-KV remains unknown. Generation quality is
+unmeasured rather than measured-and-null, because LongBench QA has no dynamic
+range at this model scale (finding 6). The mechanism behind finding 1 is
+unexplained; three hypotheses were tested and rejected, and none is offered in
+their place.
 
 No number appears in this repository that was not produced by a run in it.
