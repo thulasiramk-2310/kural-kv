@@ -74,35 +74,41 @@ compacted cache reallocates its mass, which is not probed here.
 
 ---
 
-## 2. Head-level reallocation does nothing; depth-level reallocation is unproven
+## 2. Head-level reallocation does nothing; depth-level reallocation gives a small real gain
 
 All methods compared at **equal total retained entries** (see METHODS for why
 allocated and stored differ for an unequal allocator). Unit of analysis is the
 sample, with deltas averaged over budgets within each sample.
 
-| set | comparison | n | mean | SE | t |
-|---|---|---|---|---|---|
-| seed 0 *(grid chosen here)* | PyramidKV − SnapKV | 20 | +0.0750 | 0.0283 | +2.65 |
-| seed 100 *(held out)* | PyramidKV − SnapKV | 20 | +0.0300 | 0.0391 | +0.77 |
-| pooled | PyramidKV − SnapKV | 40 | +0.0525 | 0.0241 | +2.18 |
-| pooled | Ada-KV − SnapKV | 40 | **+0.0008** | 0.0164 | **+0.05** |
+| set | comparison | n | mean | SE | t | 95% CI |
+|---|---|---|---|---|---|---|
+| seed 0 *(grid chosen here)* | Pyramid − Snap | 20 | +0.0750 | 0.0283 | +2.65 | [+0.020, +0.131] |
+| seed 100 *(held out)* | Pyramid − Snap | 20 | +0.0300 | 0.0391 | +0.77 | [−0.047, +0.107] |
+| seed 200 *(held out)* | Pyramid − Snap | 60 | +0.0433 | 0.0208 | +2.09 | [+0.003, +0.084] |
+| **all held-out pooled** | **Pyramid − Snap** | **80** | **+0.0400** | 0.0183 | **+2.19** | **[+0.004, +0.076]** |
+| **all held-out pooled** | **Ada-KV − Snap** | **80** | **−0.0050** | 0.0107 | **−0.47** | **[−0.026, +0.016]** |
 
-**Ada-KV is flat. Established.** Pooled mean +0.0008, replicating independently
-on both sample sets. Reallocating budget across KV groups does not help, which is
-consistent with the failure being downstream of selection: Ada-KV's dials only
-change *which* entries selection keeps.
+**Ada-KV is flat, and now bounded. Established.** Across 80 held-out samples the
+effect is −0.005 with a 95% interval of [−0.026, +0.016]. This is a stronger
+statement than "not significant": any true benefit from reallocating budget
+across KV groups is **smaller than 0.026** on this task and model. That is
+consistent with the failure being downstream of selection, since Ada-KV's dials
+only change *which* entries selection keeps.
 
-**PyramidKV is suggestive, not established.** Its advantage more than halves on
-held-out samples (+0.075 → +0.030) and is not individually distinguishable from
-zero there. Pooled it survives at +0.0525 with a 95% interval of [+0.005,
-+0.100], the lower bound against zero. A substantial part of the original figure
-was fit to the twenty documents the grid was chosen on — exactly the regression
-the held-out set exists to expose.
+**PyramidKV is established but small.** On the samples the grid was chosen from
+it measured +0.075. On 80 samples used for no selection whatsoever it is
+**+0.040, 95% CI [+0.004, +0.076]**. The interval excludes zero, so the effect is
+real; it is also roughly half the figure the selection-contaminated set gave,
+which is what a held-out test is for. Reported as established at that reduced
+magnitude, with the lower bound noted as close to zero.
 
-One observation survives regardless of magnitude: **PyramidKV's schedule contains
-no context term**, yet it is level with SnapKV at 2K and positive at 16K. A
-context-dependent outcome from a context-independent rule is not explained by
-better selection, since selection recall is context-invariant.
+The two allocation axes therefore separate cleanly: **depth reallocation produces
+a small real gain; head reallocation produces nothing measurable.**
+
+One observation survives independent of magnitude: **PyramidKV's schedule
+contains no context term**, yet it is level with SnapKV at 2K and positive at
+16K. A context-dependent outcome from a context-independent rule is not explained
+by better selection, since selection recall is context-invariant (finding 1).
 
 ### Ada-KV's storage overhead grows as budget loosens
 
@@ -224,13 +230,13 @@ currently unknown**, and it is the most valuable open question left.
 
 ## Limitations
 
-**No held-out set except for one comparison.** Every result above other than the
-PyramidKV/Ada-KV replication comes from `seed=0`. The one case where a held-out
-set was constructed showed the effect halving, which is the best available
-estimate of how much the others may be inflated.
+**No held-out set except for finding 2.** Every other result comes from
+`seed=0`. Where a held-out set was constructed the effect halved, which is the
+best available estimate of how much the others may be inflated.
 
-**n = 20 throughout.** One sample is 0.05. No individual cell is a measured
-effect; the claims rest on consistency of sign across budgets and on replication.
+**n = 20 to 60.** One sample is 0.05, so no individual cell is a measured
+effect. Finding 2 rests on 80 held-out samples; the remaining findings are n=20
+and rest on consistency of sign across budgets.
 
 **One model carries the study.** Llama-3.2-1B is gated and unrun; Phi-3.5-mini is
 capped at 2K by a LongRoPE defect and its arm is withdrawn. Findings are
