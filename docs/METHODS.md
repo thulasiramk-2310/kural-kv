@@ -330,6 +330,41 @@ yet it buys nothing at 2K and something at 16K. Whatever it is doing, it is not
 improving selection, since selection recall was already shown to be
 context-invariant.
 
+### Held-out replication: the PyramidKV effect halves
+
+The grid, the budgets and the method set were all chosen while looking at
+`seed=0` data. The direction was therefore re-measured on `seed=100`, twenty
+generated samples never seen by any of those choices. Unit of analysis is the
+**sample**, with each sample's delta averaged over budgets first: the same sample
+appears at every budget, so treating (sample, budget) cells as independent
+inflates significance roughly fourfold.
+
+| set | comparison | n | mean | SE | t |
+|---|---|---|---|---|---|
+| seed 0 (grid chosen here) | pyramid − snap | 20 | +0.0750 | 0.0283 | +2.65 |
+| seed 100 (held out) | pyramid − snap | 20 | +0.0300 | 0.0391 | +0.77 |
+| pooled | pyramid − snap | 40 | +0.0525 | 0.0241 | +2.18 |
+| pooled | adakv − snap | 40 | +0.0008 | 0.0164 | +0.05 |
+
+**PyramidKV's advantage more than halves on held-out samples** and is not
+individually distinguishable from zero there. Pooled it survives at +0.0525 with
+a 95% interval of [+0.005, +0.100], whose lower bound sits against zero.
+
+The conclusion is therefore **suggestive, not established**: a substantial part
+of the original +0.075 was fit to those particular twenty documents. This is the
+regression toward the mean that a held-out set exists to expose, and it appeared
+at close to the size one would predict. Reporting the seed-0 figure alone would
+have overstated the effect by roughly a factor of two.
+
+**Ada-KV's flatness is established.** Pooled mean +0.0008 with t = +0.05, and it
+replicates independently on both sample sets. A null this clean is a stronger
+statement than the PyramidKV result it sits beside.
+
+What this does not license: the study still has no independent held-out set for
+anything other than this one comparison. Every other number in this repository
+comes from `seed=0` and carries the same unquantified risk that this test just
+quantified for one result.
+
 ### Ada-KV's storage overhead grows with budget, not against it
 
 | budget | 181 | 362 | 630 | 724 | 1451 | 2900 |

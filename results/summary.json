@@ -377,6 +377,41 @@
     "resolution": "n=20, one sample = 0.05. No individual cell is a measured effect; the supported claim is the consistency of sign, not any gap size.",
     "pyramidkv_2k_vs_16k": "Level with SnapKV at 2048, positive at 5 of 6 budgets at 16384, from a schedule with no context term in it.",
     "corrected_after_defect": "Re-measured after the mask-registration defect. SnapKV and PyramidKV reproduced bit-identically (they do not use the custom attention); Ada-KV moved from +0.008 to -0.008, across zero. Verdict unchanged.",
-    "withdrawn": "The Phi-3.5-mini MHA arm result was computed under the defect and has been withdrawn. Whether 'two dials' flattened Ada-KV is currently unknown."
+    "withdrawn": "The Phi-3.5-mini MHA arm result was computed under the defect and has been withdrawn. Whether 'two dials' flattened Ada-KV is currently unknown.",
+    "held_out_replication": {
+      "source_logs": [
+        "results/methods_16k.json",
+        "results/heldout_16k_seed100.json"
+      ],
+      "held_out_seed": 100,
+      "n_per_set": 20,
+      "unit_of_analysis": "sample",
+      "pyramid_minus_snapkv": {
+        "seed0": {
+          "mean": 0.075,
+          "t": 2.65
+        },
+        "seed100_heldout": {
+          "mean": 0.03,
+          "t": 0.77
+        },
+        "pooled": {
+          "mean": 0.0525,
+          "t": 2.18,
+          "ci95": [
+            0.0053,
+            0.0997
+          ]
+        }
+      },
+      "adakv_minus_snapkv": {
+        "pooled": {
+          "mean": 0.0008,
+          "t": 0.05
+        }
+      },
+      "finding": "PyramidKV's advantage more than halves on held-out samples and is not individually significant there; pooled it survives with a CI lower bound against zero. Suggestive, not established. Ada-KV's flatness replicates on both sets and IS established.",
+      "caveat": "Only this one comparison has a held-out set. Every other result in the repository is seed=0 only."
+    }
   }
 }
