@@ -354,10 +354,19 @@ def save_prefill(path, cache, scores, first, prompt_len, identity):
 
 def load_prefill(path, device, identity):
     d = torch.load(path, map_location="cpu", weights_only=True)
-    if d["identity"] != identity:
+    # Compatibility, deliberately narrow: a key ABSENT from an older cache takes
+    # the current default, because the property it names did not exist yet and
+    # could only have had that value. A key that is present and differs still
+    # rejects. Widening this to tolerate mismatches would silently reuse a cache
+    # built under different settings, which is what the identity exists to stop.
+    DEFAULTS = {"quant": "none", "min_natural_tokens": 0}
+    cached = dict(d["identity"])
+    for k, v in DEFAULTS.items():
+        cached.setdefault(k, v)
+    if cached != identity:
         raise SystemExit(
             f"cached prefill at {path} was built under a different config:\n"
-            f"  cached:   {d['identity']}\n  requested: {identity}")
+            f"  cached:   {cached}\n  requested: {identity}")
     # Free each CPU tensor as it reaches the GPU. A 16K entry is ~470 MiB, and
     # holding the whole decoded payload while building the GPU copy costs that
     # twice; on a 16GB machine with the model resident that is enough for the OS
