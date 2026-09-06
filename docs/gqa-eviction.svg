@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 330" width="940" height="330" role="img" aria-label="On GQA, evicting one KV entry removes it for all six query heads in its group. The unit of eviction is the group, not the head.">
+  <style>
+    :root { color-scheme: light dark; }
+    .bg   { fill: #fbfbfa; }
+    .lbl  { fill: #1c1b19; font: 600 13px ui-sans-serif, system-ui, sans-serif; }
+    .ttl  { fill: #1c1b19; font: 600 15px ui-sans-serif, system-ui, sans-serif; }
+    .sub  { fill: #6b6862; font: 400 10.5px ui-monospace, monospace; }
+    .note { fill: #8a867e; font: 400 10px ui-sans-serif, system-ui, sans-serif; }
+    .q    { fill: #ffffff; stroke: #b9b6ae; stroke-width: 1.4; }
+    .kv   { fill: #ffffff; stroke: #b9b6ae; stroke-width: 1.6; rx: 6; }
+    .link { stroke: #cfccc4; stroke-width: 1.2; fill: none; }
+    .acc  { fill: #c15f3c; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #1a1a18; } .lbl, .ttl { fill: #eeece7; } .sub { fill: #a8a49c; }
+      .q  { fill: #262523; stroke: #4a4844; } .kv { fill: #262523; stroke: #4a4844; }
+      .link { stroke: #3a3835; } .acc { fill: #d4744f; }
+    }
+    /* group A is evicted, then restored, on a loop */
+    .gA { animation: evict 6s ease-in-out infinite; }
+    @keyframes evict {
+      0%, 22%   { opacity: 1; }
+      36%, 74%  { opacity: .17; }
+      88%, 100% { opacity: 1; }
+    }
+    .xmark { animation: xin 6s ease-in-out infinite; }
+    @keyframes xin {
+      0%, 26%   { opacity: 0; }
+      38%, 72%  { opacity: 1; }
+      84%, 100% { opacity: 0; }
+    }
+    .cap { animation: cap 6s ease-in-out infinite; }
+    @keyframes cap {
+      0%, 28%   { opacity: 0; }
+      40%, 70%  { opacity: 1; }
+      82%, 100% { opacity: 0; }
+    }
+  </style>
+
+  <rect class="bg" width="940" height="330"/>
+  <text class="ttl" x="28" y="34">The unit of eviction is the group, not the head</text>
+  <text class="note" x="28" y="52">Qwen2.5-1.5B — 12 query heads, 2 KV heads, group size 6. An allocator has 2 dials, not 12.</text>
+
+  <!-- group A: 6 query heads -->
+  <text class="sub" x="28" y="96">query heads</text>
+  <g class="gA">
+    <circle class="q" cx="150" cy="92" r="13"/><circle class="q" cx="186" cy="92" r="13"/>
+    <circle class="q" cx="222" cy="92" r="13"/><circle class="q" cx="258" cy="92" r="13"/>
+    <circle class="q" cx="294" cy="92" r="13"/><circle class="q" cx="330" cy="92" r="13"/>
+    <path class="link" d="M150 105 L 240 168 M186 105 L 240 168 M222 105 L 240 168
+                          M258 105 L 240 168 M294 105 L 240 168 M330 105 L 240 168"/>
+    <rect class="kv" x="180" y="168" width="120" height="40"/>
+    <text class="lbl" x="204" y="193">KV head 0</text>
+  </g>
+  <g class="xmark">
+    <line x1="222" y1="176" x2="258" y2="200" stroke="#c15f3c" stroke-width="2.6"/>
+    <line x1="258" y1="176" x2="222" y2="200" stroke="#c15f3c" stroke-width="2.6"/>
+  </g>
+
+  <!-- group B: 6 query heads, untouched -->
+  <g>
+    <circle class="q" cx="560" cy="92" r="13"/><circle class="q" cx="596" cy="92" r="13"/>
+    <circle class="q" cx="632" cy="92" r="13"/><circle class="q" cx="668" cy="92" r="13"/>
+    <circle class="q" cx="704" cy="92" r="13"/><circle class="q" cx="740" cy="92" r="13"/>
+    <path class="link" d="M560 105 L 650 168 M596 105 L 650 168 M632 105 L 650 168
+                          M668 105 L 650 168 M704 105 L 650 168 M740 105 L 650 168"/>
+    <rect class="kv" x="590" y="168" width="120" height="40"/>
+    <text class="lbl" x="614" y="193">KV head 1</text>
+  </g>
+
+  <text class="cap acc" x="150" y="240" style="font: 600 12px ui-sans-serif, system-ui, sans-serif">one entry evicted &#8594; gone for all six</text>
+  <text class="note" x="560" y="240">the other group is unaffected</text>
+
+  <text class="note" x="28" y="288">Six query heads may disagree about which tokens matter, and a single group-level decision cannot satisfy both. Measured</text>
+  <text class="note" x="28" y="304">consequence: reallocating budget across these groups changes nothing — Ada-KV &#8722; SnapKV = &#8722;0.005, 95% CI [&#8722;0.026, +0.016], n=80 held out.</text>
+</svg>

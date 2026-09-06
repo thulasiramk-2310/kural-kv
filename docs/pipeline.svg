@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 300" width="940" height="300" role="img" aria-label="kural-kv measurement pipeline: sample, chunked prefill, cache plus per-head scores, eviction policy, decode, grade">
+  <style>
+    :root { color-scheme: light dark; }
+    .bg   { fill: #fbfbfa; }
+    .box  { fill: #ffffff; stroke: #b9b6ae; stroke-width: 1.5; rx: 8; }
+    .lbl  { fill: #1c1b19; font: 600 13px ui-sans-serif, system-ui, sans-serif; }
+    .sub  { fill: #6b6862; font: 400 10.5px ui-monospace, monospace; }
+    .note { fill: #8a867e; font: 400 10px ui-sans-serif, system-ui, sans-serif; }
+    .flow { stroke: #b9b6ae; stroke-width: 1.5; fill: none; marker-end: url(#a); }
+    .acc  { fill: #c15f3c; }
+    .accs { stroke: #c15f3c; }
+    .gate { fill: #ffffff; stroke: #c15f3c; stroke-width: 1.5; rx: 8; }
+    @media (prefers-color-scheme: dark) {
+      .bg   { fill: #1a1a18; }
+      .box  { fill: #262523; stroke: #4a4844; }
+      .lbl  { fill: #eeece7; }
+      .sub  { fill: #a8a49c; }
+      .note { fill: #8a867e; }
+      .flow { stroke: #4a4844; }
+      .gate { fill: #262523; stroke: #d4744f; }
+      .acc  { fill: #d4744f; }
+      .accs { stroke: #d4744f; }
+    }
+    .tok { animation: run 5s linear infinite; }
+    @keyframes run {
+      0%   { transform: translateX(0);    opacity: 0; }
+      4%   { opacity: 1; }
+      96%  { opacity: 1; }
+      100% { transform: translateX(736px); opacity: 0; }
+    }
+    .pulse { animation: pulse 5s ease-in-out infinite; }
+    @keyframes pulse {
+      0%, 62%, 100% { opacity: .25; }
+      70%, 88%      { opacity: 1; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#b9b6ae"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="940" height="300"/>
+  <text class="lbl" x="28" y="34" style="font-size:15px">kural-kv measurement pipeline</text>
+  <text class="note" x="28" y="52">one prefill per sample, reused by every policy and budget — sample outer, config inner</text>
+
+  <!-- stages -->
+  <g transform="translate(28,84)">
+    <rect class="box" width="132" height="62"/>
+    <text class="lbl" x="14" y="26">sample</text>
+    <text class="sub" x="14" y="44">RULER · real text</text>
+  </g>
+  <path class="flow" d="M166 115 H 196"/>
+
+  <g transform="translate(202,84)">
+    <rect class="box" width="150" height="62"/>
+    <text class="lbl" x="14" y="26">chunked prefill</text>
+    <text class="sub" x="14" y="44">chunk 128 · eager</text>
+  </g>
+  <path class="flow" d="M358 115 H 388"/>
+
+  <g transform="translate(394,84)">
+    <rect class="box" width="164" height="62"/>
+    <text class="lbl" x="14" y="26">K, V + scores</text>
+    <text class="sub" x="14" y="44">scores per query head</text>
+  </g>
+  <path class="flow" d="M564 115 H 594"/>
+
+  <g transform="translate(600,84)">
+    <rect class="box" width="150" height="62"/>
+    <text class="lbl" x="14" y="26">policy</text>
+    <text class="sub" x="14" y="44">top-k per KV head</text>
+  </g>
+  <path class="flow" d="M756 115 H 786"/>
+
+  <g transform="translate(792,84)">
+    <rect class="box" width="120" height="62"/>
+    <text class="lbl" x="14" y="26">decode</text>
+    <text class="sub" x="14" y="44">then grade</text>
+  </g>
+
+  <!-- the token travelling the pipeline -->
+  <circle class="tok acc" cx="176" cy="115" r="5"/>
+
+  <!-- guards that can halt a run -->
+  <g transform="translate(202,186)">
+    <rect class="gate" width="150" height="46"/>
+    <text class="acc" x="14" y="20" style="font: 600 11px ui-sans-serif, system-ui, sans-serif">finite check</text>
+    <text class="note" x="14" y="36">NaN halts the run</text>
+  </g>
+  <path class="flow accs" style="stroke-dasharray:3 3; marker-end:none" d="M277 148 V 186"/>
+
+  <g transform="translate(600,186)">
+    <rect class="gate" width="150" height="46"/>
+    <text class="acc" x="14" y="20" style="font: 600 11px ui-sans-serif, system-ui, sans-serif">source unchanged</text>
+    <text class="note" x="14" y="36">policy ran on a clone</text>
+  </g>
+  <path class="flow accs" style="stroke-dasharray:3 3; marker-end:none" d="M675 148 V 186"/>
+
+  <g transform="translate(792,186)">
+    <rect class="gate" width="120" height="46"/>
+    <text class="acc" x="14" y="20" style="font: 600 11px ui-sans-serif, system-ui, sans-serif">baseline &#8805; 0.5</text>
+    <text class="note" x="14" y="36">or refuse to write</text>
+  </g>
+  <path class="flow accs" style="stroke-dasharray:3 3; marker-end:none" d="M852 148 V 186"/>
+
+  <text class="note" x="28" y="270">Guards halt the run rather than record a number. A weak baseline measures the pipeline, not the method.</text>
+</svg>

@@ -10,6 +10,17 @@ null, or withdrawn — and the grades are part of the result. Two central findin
 carry held-out replications; one earlier claim is retracted and one arm is
 withdrawn, both retained in the record rather than removed.
 
+## How it works
+
+![measurement pipeline](docs/pipeline.svg)
+
+One prefill per sample, reused by every policy and budget. The guards below the
+line halt a run rather than record a number — a non-finite forward pass, a policy
+that mutated the cache it was given, or a full-cache baseline too weak to be
+measuring the method rather than the pipeline.
+
+![GQA eviction](docs/gqa-eviction.svg)
+
 ## Reproducing this
 
 ```bash
