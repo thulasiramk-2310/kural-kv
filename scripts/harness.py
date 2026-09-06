@@ -358,12 +358,25 @@ def load_prefill(path, device, identity):
         raise SystemExit(
             f"cached prefill at {path} was built under a different config:\n"
             f"  cached:   {d['identity']}\n  requested: {identity}")
+    # Free each CPU tensor as it reaches the GPU. A 16K entry is ~470 MiB, and
+    # holding the whole decoded payload while building the GPU copy costs that
+    # twice; on a 16GB machine with the model resident that is enough for the OS
+    # to kill the run mid-sweep, which it did. Entries are dropped as consumed.
     cache = DynamicCache()
-    for i, e in enumerate(d["layers"]):
+    layers = d.pop("layers")
+    for i in range(len(layers)):
+        e = layers[i]
         cache.update(e["keys"].to(device).contiguous(),
                      e["values"].to(device).contiguous(), i)
-    scores = [s.to(device) for s in d["scores"]]
-    return cache, scores, d["first_token"], d["prompt_len"], d["next_position"]
+        layers[i] = None
+    sc = d.pop("scores")
+    scores = []
+    for i in range(len(sc)):
+        scores.append(sc[i].to(device))
+        sc[i] = None
+    out = (cache, scores, d["first_token"], d["prompt_len"], d["next_position"])
+    del d, layers, sc
+    return out
 
 
 # --------------------------------------------------------------------------
