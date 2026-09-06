@@ -241,15 +241,29 @@ The prediction recorded in the README before this ran was that Ada-KV would show
 little or no gain, because the recall measurement had already located the failure
 downstream of selection and Ada-KV's dials only change what selection keeps.
 
-| budget | SnapKV | PyramidKV | Ada-KV | Ada−Snap | Pyr−Snap |
-|---|---|---|---|---|---|
-| 181 | 0.250 | 0.200 | 0.350 | +0.100 | −0.050 |
-| 362 | 0.300 | 0.400 | 0.350 | +0.050 | +0.100 |
-| 630 | 0.450 | 0.500 | 0.300 | −0.150 | +0.050 |
-| 724 | 0.400 | 0.600 | 0.450 | +0.050 | +0.200 |
-| 1451 | 0.650 | 0.750 | 0.600 | −0.050 | +0.100 |
-| 2900 | 0.800 | 0.850 | 0.850 | +0.050 | +0.050 |
-| **mean** | | | | **+0.008** | **+0.075** |
+| budget | SnapKV | PyramidKV | Ada-KV | Pyr−Snap | Ada−Snap (equal allocated) | Ada stored | Ada−Snap (equal stored) |
+|---|---|---|---|---|---|---|---|
+| 181 | 0.250 | 0.200 | 0.350 | −0.050 | +0.100 | 209 (1.15x) | +0.092 |
+| 362 | 0.300 | 0.400 | 0.350 | +0.100 | +0.050 | 461 (1.27x) | −0.005 |
+| 630 | 0.450 | 0.500 | 0.300 | +0.050 | −0.150 | 851 (1.35x) | −0.144 |
+| 724 | 0.400 | 0.600 | 0.450 | +0.200 | +0.050 | 986 (1.36x) | −0.040 |
+| 1451 | 0.650 | 0.750 | 0.600 | +0.100 | −0.050 | 2035 (1.40x) | −0.110 |
+| 2900 | 0.800 | 0.850 | 0.850 | +0.050 | +0.050 | 4047 (1.40x) | +0.050 |
+| **mean** | | | | **+0.075** | **+0.008** | | **−0.026** |
+| **selection p50** | 8.0 ms | 7.9 ms | 23.5 ms | | | | |
+
+Both Ada-KV columns are reported because they answer different questions and
+they disagree. At equal *allocated* entries — the comparison the papers make —
+Ada-KV is flat. At equal *stored* entries, the memory a practitioner actually
+pays for, it is slightly worse than uniform allocation, and it costs about 3x
+SnapKV's selection time, which the protocol counts.
+
+Neither Ada-KV column is a statement about the method in general. The storage
+gap exists because a dense cache holds one sequence length for all heads; paged
+attention stores ragged per-head lengths natively and pays none of it. The
+selection cost is likewise this implementation on this stack. What generalises
+from this arm is the *accuracy* result at equal allocated entries: reallocating
+across two KV groups does not help.
 
 **Ada-KV is flat**: mean +0.008 at equal allocated entries, with deltas swinging
 from −0.150 to +0.100 and signs mixed across the grid. **PyramidKV gains**:
