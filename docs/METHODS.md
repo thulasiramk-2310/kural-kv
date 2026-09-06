@@ -104,6 +104,43 @@ uses its own length.
 Recorded because it is invisible until it fails and is not something the papers
 mention. Anyone reproducing a layer-varying budget method on this stack meets it.
 
+### Registering an attention function is not enough: the mask dispatches too
+
+The most expensive defect found in this repository, because it invalidated two
+completed runs and one already-reported conclusion.
+
+`ALL_ATTENTION_FUNCTIONS.register(name, fn)` installs the attention kernel.
+Mask construction dispatches **separately, on the same name**:
+
+    mask_interface = ALL_MASK_ATTENTION_FUNCTIONS[config._attn_implementation]
+
+An unregistered name does not raise there. It falls through to a default that
+skips building the causal mask, so **prefill attends bidirectionally** — the
+model reads the whole prompt as unordered context and every cached key is built
+from the wrong attention. Nothing errors.
+
+What makes it nearly undetectable is that **decode is unaffected**: a single
+query token needs no causal mask, so generation keeps working. A run whose
+prefill came from cache scored normally, and only a run that computed prefill
+live was wrong. Two runs with the same code and the same command differed solely
+in whether the prefill cache happened to be warm.
+
+The symptom, once found, is unmistakable: asked to retrieve a needle, the model
+continues the haystack — `". The grass is blue. The sky is blue. The sky is
+blue."` It is completing the filler rather than answering, which is what
+bidirectional attention over a noise-heavy prompt produces.
+
+The fix is to register the eager mask builder under the same name as the
+attention function. Both registries must agree.
+
+**Audit performed rather than assumed.** Every result file records its prefill
+cache hits and misses, so contamination was determined mechanically: a run is
+affected only if it installed the custom attention *and* computed any prefill
+live. Two files were invalid and were deleted; the four-way method comparison
+survived because its prefills came from caches built earlier under real eager,
+with 20 hits and 0 misses. That audit was only possible because hit/miss counts
+were already being logged — an accounting detail added for a different reason.
+
 ### A per-head mask must grow with the cache
 
 Ada-KV needs a per-head mask over the padded slots, which the shared mask cannot

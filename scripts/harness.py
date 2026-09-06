@@ -417,6 +417,21 @@ def install_head_mask_attention(model):
         return attn_output.transpose(1, 2).contiguous(), attn_weights
 
     ALL_ATTENTION_FUNCTIONS.register("eager_head_masked", eager_head_masked)
+
+    # Registering an attention function is NOT enough. Mask construction
+    # dispatches separately, on the same name:
+    #     mask_interface = ALL_MASK_ATTENTION_FUNCTIONS[config._attn_implementation]
+    # An unregistered name does not raise -- it falls through to a default that
+    # skips the causal mask, so prefill attends BIDIRECTIONALLY and the model
+    # silently reads the whole prompt as unordered context. Decode is unaffected
+    # because a single query token needs no causal mask, which is exactly what
+    # makes this invisible: generation still runs, and only multi-token prefill
+    # is wrong. The eager mask builder is therefore registered under the same
+    # name as the attention function.
+    from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS
+    ALL_MASK_ATTENTION_FUNCTIONS.register(
+        "eager_head_masked", ALL_MASK_ATTENTION_FUNCTIONS["eager"])
+
     model.config._attn_implementation = "eager_head_masked"
     return model
 
