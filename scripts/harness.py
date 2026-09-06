@@ -692,6 +692,13 @@ def main():
                          "their shared KV entry. Re-runnable against an existing "
                          "prefill cache, since scores are stored per query head")
     ap.add_argument("--pool-kernel", type=int, default=7)
+    ap.add_argument("--min-baseline", type=float, default=0.5,
+                    help="refuse to write results if the full-cache baseline falls "
+                         "below this. A weak baseline measures the pipeline, not "
+                         "the method; the zero-baseline rule missed a 0.400 case")
+    ap.add_argument("--allow-weak-baseline", action="store_true",
+                    help="acknowledge a baseline below --min-baseline and write "
+                         "results anyway, recording that it was overridden")
     ap.add_argument("--recall-target", choices=("value", "key"), default="value",
                     help="which part of the needle to trace through selection")
     ap.add_argument("--measure-recall", action="store_true",
@@ -978,9 +985,28 @@ def main():
               f"{v['mean_kept_fraction']:>7.2%} {v['n']:>3}  {v['score']:>8.3f}   {t}")
     print(f"prefill cache: {hits} hit, {misses} miss")
 
+    # A baseline materially below what the task should yield means the pipeline
+    # is suspect, not that the task is hard. The earlier rule only fired at
+    # exactly 0.000, and a Phi arm with a 0.400 baseline -- broken by a LongRoPE
+    # defect and a truncated generation length -- read as "hard task" and was
+    # reported before it was verified. The guard now fires on "materially low",
+    # and requires an explicit acknowledgement rather than a judgement call.
+    baseline = next((v["score"] for v in summary.values()
+                     if v["policy"] == "full"), None)
+    weak = baseline is not None and baseline < args.min_baseline
+    if weak and not args.allow_weak_baseline:
+        print(f"\nREFUSING TO WRITE: full-cache baseline {baseline:.3f} is below "
+              f"--min-baseline {args.min_baseline}.")
+        print("A baseline this low measures the pipeline, not the method. Verify "
+              "the model, prompt and generation length independently first.")
+        print("Re-run with --allow-weak-baseline to record it deliberately.")
+        return 1
+
     payload = {
         "run": {"timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "task": args.task, "metric": task.metric_name,
+                "full_cache_baseline": baseline,
+                "weak_baseline_override": bool(weak and args.allow_weak_baseline),
                 "decode_tokens": decode_tokens,
                 "prefill_cache_hits": hits, "prefill_cache_misses": misses},
         "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
