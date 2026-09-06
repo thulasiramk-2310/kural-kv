@@ -390,6 +390,42 @@ As recorded above, this overhead is a property of dense storage. Paged-attention
 implementations hold ragged per-head lengths natively and pay none of it, so the
 equal-stored penalty is a statement about this stack and not about the method.
 
+## A weak baseline halts the run, not just a zero one
+
+A full-cache baseline materially below what the task should yield means the
+pipeline is suspect, not that the task is hard. `scripts/harness.py` refuses to
+write results when the baseline falls below `--min-baseline` (0.5 by default),
+and requires `--allow-weak-baseline` to record one deliberately, which is then
+flagged in the output.
+
+The earlier rule fired only at exactly 0.000, and that gap cost a reported
+result. The Phi-3.5-mini arm produced a baseline of **0.400** — low, but non-zero,
+so it read as a hard task rather than a broken pipeline, and it was reported
+before being verified. Two independent defects sat underneath it: a LongRoPE
+failure past position 4096, and a generation length carried over from another
+model that truncated before Phi finished restating the question. Either alone
+would have produced a plausible, wrong number.
+
+The general form: **partial failure is more dangerous than total failure**,
+because total failure trips the guard and partial failure looks like a result.
+
+## Log more per-sample detail than the analysis currently needs
+
+Every run records prefill cache hits and misses. The field was added to report
+caching efficiency and had no analytical purpose.
+
+When the attention-mask defect was found, it was the only thing that could
+separate contaminated runs from clean ones: a run was affected if and only if it
+installed the custom attention *and* computed prefill live, and the hit/miss
+counts answered that mechanically across all 26 result files. Two were invalid;
+24 were provably clean. Without that field, the only sound response would have
+been to re-run everything.
+
+The lesson generalises past this repository. A defect found late is audited with
+whatever was logged at the time, and no amount of care afterwards recovers detail
+that was never written down. Per-sample provenance is cheap; retroactive re-runs
+are not.
+
 ## Nothing is trained, and what that does and does not rule out
 
 No parameters are fit anywhere in this study. There is no optimizer, no backward
