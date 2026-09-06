@@ -1,8 +1,5 @@
 # Abstract
 
-*Draft. Numbers are pending the n=60 replication; the version below quotes the
-n=20 figures and will be updated in place.*
-
 KV-cache eviction methods are built on a common premise: identify the tokens that
 matter and keep them. We test that premise directly on a 1B-class GQA model
 running on a single 8GB consumer GPU, and find it incomplete.
@@ -10,9 +7,11 @@ running on a single 8GB consumer GPU, and find it incomplete.
 Measuring whether an answer's own cache entries survive selection — by applying
 the identical top-k the policy applies — we find that **selection recall is
 invariant to context length while accuracy is not**. On RULER `niah_single_1`
-with SnapKV at a budget of 181 entries, the answer's entries survive in 0.830 of
-attention units at 2K context and 0.793 at 16K, a difference of 0.037, while
-accuracy falls from 0.800 to 0.250. Raising the 16K budget from 181 to 2,900
+with SnapKV at a budget of 181 entries, the answer's entries survive in 0.822 of
+attention units at 2K context and 0.795 at 16K, a difference of 0.027, while
+accuracy falls from 0.867 to 0.433. Both figures come from samples used for no
+selection of any kind, and recall reproduces to within 0.02 of the original
+measurement on every cell. Raising the 16K budget from 181 to 2,900
 entries lifts accuracy by 0.55 and target retention by only 0.12. **Most of what
 a larger budget buys is not the answer's own keys.** Retaining a fact is not
 sufficient for using it, and an account of eviction damage that reasons only
@@ -27,13 +26,13 @@ mechanism rather than supply one.
 
 Against that result we evaluate three allocation strategies at equal total
 retained entries. **Reallocating budget across KV heads (Ada-KV) does nothing**:
-pooled mean +0.0008 against uniform allocation, replicating independently on
-held-out samples. This is consistent with the failure being downstream of
+across 80 held-out samples the effect is −0.005 with a 95% interval of
+[−0.026, +0.016], bounding any true benefit below 0.026. This is consistent with the failure being downstream of
 selection, since head-level dials only change which entries selection keeps.
-Reallocating across layers (PyramidKV) is **suggestive but not established**: an
-advantage of +0.075 on the samples the budget grid was chosen from more than
-halves to +0.030 on held-out samples, pooling to +0.0525 with a 95% interval
-whose lower bound touches zero.
+Reallocating across layers (PyramidKV) gives a **small real gain**: +0.075 on the
+samples the budget grid was chosen from falls to **+0.040 (95% CI [+0.004,
++0.076])** across 80 held-out samples — real, but roughly half the
+selection-contaminated estimate.
 
 Three further results bear on how this literature is evaluated. The correct
 budget axis — absolute retained entries versus fraction of context — is a
@@ -53,7 +52,8 @@ narrowing is not incidental — across published models the head-budget lever sp
 32 dials under MHA to 2 under aggressive GQA, and per-head allocation methods
 were validated at the wide end.
 
-All results are single-model at n=20–60, with one held-out replication. We report
+All results are single-model. The two central findings carry held-out
+replications at n = 29–80; the remainder are n = 20. We report
 findings graded by what the evidence supports, including one retraction and one
 withdrawal, and document five implementation traps — position handling on resume
 after eviction, layer-varying budgets under a shared causal mask, attention-kernel

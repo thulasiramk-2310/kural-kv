@@ -13,8 +13,8 @@ supports, and the grades are part of the result:
   record shows what was claimed and why it was dropped.
 
 Primary arm: Qwen2.5-1.5B-Instruct, bf16, GQA with 12 query heads over 2 KV
-heads. Benchmark: RULER `niah_single_1`. n = 20 per point unless stated; one
-sample is 0.05, which is the resolution floor for every cell below.
+heads. Benchmark: RULER `niah_single_1`. Findings 1 and 2 carry held-out
+replications at n = 29-80; the remainder are n = 20, where one sample is 0.05.
 
 ---
 
@@ -26,16 +26,35 @@ Selection recall is the fraction of (layer, KV head) units whose top-k retains
 *every* token of the answer. It is measured by applying the identical selection
 the policy applies, so it asks precisely what the policy kept.
 
+Measured twice: once on the samples the study was built on, and once on samples
+used for no selection of any kind.
+
+**Held-out (seed 200):**
+
+| budget | 2048 recall / accuracy | 16384 recall / accuracy | Δ recall | Δ accuracy |
+|---|---|---|---|---|
+| 181 | 0.822 / 0.867 | 0.795 / **0.433** | 0.027 | **0.434** |
+| 362 | 0.898 / 0.900 | 0.861 / **0.350** | 0.037 | **0.550** |
+
+**Original (seed 0):**
+
 | budget | 2048 recall / accuracy | 16384 recall / accuracy |
 |---|---|---|
 | 91 | 0.163 / 0.000 | 0.114 / 0.000 |
-| 181 | 0.830 / 0.800 | 0.793 / **0.250** |
-| 362 | 0.893 / 0.900 | 0.856 / **0.300** |
+| 181 | 0.830 / 0.800 | 0.793 / 0.250 |
+| 362 | 0.893 / 0.900 | 0.856 / 0.300 |
 
-**Selection recall is context-invariant; accuracy is not.** At 181 entries the
-two contexts differ by 0.037 in recall and 0.550 in accuracy. SnapKV retains the
-answer at essentially the same rate at both lengths, and the model can only use
-it at the shorter one.
+Recall reproduces to within 0.02 on every cell across the two sample sets, which
+is the strongest replication in the study.
+
+**Selection recall is context-invariant; accuracy is not.** Held-out, the two
+contexts differ by **0.027 in recall and 0.434 in accuracy** at 181 entries, and
+by 0.037 and 0.550 at 362. SnapKV retains the answer at essentially the same rate
+at both lengths, and the model can only use it at the shorter one.
+
+(n: 2K recall 58, 16K recall 29, accuracy 60 each. Two samples were skipped where
+the answer string could not be located in the prompt, rather than being scored as
+failures.)
 
 The same point from the other direction: at 16384, raising the budget from 181 to
 2900 entries lifts accuracy 0.250 → 0.800 while lifting target recall only
