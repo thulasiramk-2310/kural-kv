@@ -47,6 +47,32 @@ PROBE_TEXT = (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+def load_model(model_id, dtype, quant="none"):
+    """Load a model onto GPU 0, optionally 4-bit NF4 quantised.
+
+    The contrast arm is Phi-3.5-mini, which is 3.8B parameters and does not fit
+    in 8GB at 2 bytes per element. It is the one model in the study that is
+    quantised, and only its *weights* are: the KV cache stays 2 bytes per
+    element, so the memory metric this study reports on is unaffected.
+
+    device_map is pinned to GPU 0 for the unquantised path for the reasons in
+    METHODS. bitsandbytes places quantised weights itself and requires the same
+    pinning to avoid a silent CPU split.
+    """
+    kwargs = dict(attn_implementation="eager", device_map={"": 0})
+    if quant == "nf4":
+        from transformers import BitsAndBytesConfig
+        kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True, bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=DTYPES[dtype],
+            bnb_4bit_use_double_quant=True)
+    else:
+        kwargs["dtype"] = DTYPES[dtype]
+    model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs).eval()
+    assert next(model.parameters()).device.type == "cuda", "model is not on cuda"
+    return model
+
+
 class Gates:
     """Collects PASS/FAIL results and prints them as they are decided."""
 
@@ -261,6 +287,9 @@ def main():
     ap.add_argument("--decode-tokens", type=int, default=20,
                     help="tokens to decode after eviction (gate 5)")
     ap.add_argument("--model-id", default=MODEL_ID)
+    ap.add_argument("--quant", choices=("none", "nf4"), default="none",
+                    help="nf4 quantises WEIGHTS only; the KV cache stays 2 bytes "
+                         "per element, so the memory metric is unaffected")
     ap.add_argument("--dtype", choices=sorted(DTYPES), default="fp16",
                     help="weight/activation dtype. fp16 is the project default. "
                          "Qwen2.5 overflows in fp16 and emits NaN -- it needs bf16, "
@@ -294,23 +323,12 @@ def main():
     # ---- Gate 2: load model in FP16 with eager attention --------------------
     try:
         tokenizer = AutoTokenizer.from_pretrained(args.model_id)
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model_id,
-            dtype=DTYPES[args.dtype],
-            attn_implementation="eager",
-            # Never device_map="auto". "auto" silently offloads whatever does not
-            # fit to CPU, which puts part of the KV cache in system RAM and makes
-            # every memory and latency number meaningless. {"": 0} pins the whole
-            # model to GPU 0 and raises if it does not fit -- a crash tells the
-            # truth, a silent offload does not. It also streams weights shard by
-            # shard straight to VRAM instead of staging the full model in CPU RAM.
-            device_map={"": 0},
-        ).eval()
+        model = load_model(args.model_id, args.dtype, args.quant)
         cfg = model.config
         param_device = next(model.parameters()).device
-        load_ok = (model.dtype == DTYPES[args.dtype]
-                   and cfg._attn_implementation == "eager"
-                   and param_device.type == "cuda")
+        load_ok = (cfg._attn_implementation == "eager"
+                   and param_device.type == "cuda"
+                   and (args.quant != "none" or model.dtype == DTYPES[args.dtype]))
         gates.record("model_loaded_fp16_eager", load_ok,
                      model_id=args.model_id,
                      dtype=str(model.dtype),
@@ -385,9 +403,12 @@ def main():
     expect_kv = args.expect_kv_heads if args.expect_kv_heads else cfg.num_key_value_heads
     expect_attn = args.expect_attn_heads if args.expect_attn_heads else cfg.num_attention_heads
     is_gqa = kv_heads_in_cache < attn_heads_in_scores
+    # The gate checks that the runtime tensors match what the model declares,
+    # which is the real invariant. It does NOT require GQA: the contrast arm is
+    # deliberately MHA, and failing it for being what it is would be wrong.
+    # Whether the model is GQA is reported, not asserted.
     gqa_ok = (kv_heads_in_cache == expect_kv
               and attn_heads_in_scores == expect_attn
-              and is_gqa
               and attn_heads_in_scores % kv_heads_in_cache == 0)
     group = attn_heads_in_scores // kv_heads_in_cache if kv_heads_in_cache else 0
     gates.record("gqa_confirmed", gqa_ok,
@@ -399,10 +420,15 @@ def main():
                  is_gqa=is_gqa,
                  gqa_group_size=group,
                  budget_units=kv_heads_in_cache,
-                 note=f"{kv_heads_in_cache} KV heads behind {attn_heads_in_scores} "
-                      f"query heads: evicting one KV entry removes it for all "
-                      f"{group} query heads in its group, so the study has "
-                      f"{kv_heads_in_cache} budget units, not {attn_heads_in_scores}")
+                 attention_type="GQA" if is_gqa else "MHA",
+                 note=(f"{kv_heads_in_cache} KV heads behind "
+                       f"{attn_heads_in_scores} query heads: evicting one KV entry "
+                       f"removes it for all {group} query heads in its group, so "
+                       f"the budget has {kv_heads_in_cache} units, not "
+                       f"{attn_heads_in_scores}") if is_gqa else
+                      (f"MHA: {attn_heads_in_scores} query heads each own their "
+                       f"own KV, so the budget has {kv_heads_in_cache} independent "
+                       f"units -- the setting the published methods assume"))
 
     del out, attentions
     torch.cuda.empty_cache()

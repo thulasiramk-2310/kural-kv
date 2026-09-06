@@ -30,7 +30,7 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
-from gate_check import DTYPES, MODEL_ID, decode
+from gate_check import DTYPES, MODEL_ID, decode, load_model
 from longbench import LongBenchTask
 from ruler import RulerTask
 
@@ -626,6 +626,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model-id", default=MODEL_ID)
+    ap.add_argument("--quant", choices=("none", "nf4"), default="none",
+                    help="nf4 quantises weights only; the KV cache stays 2 bytes")
     ap.add_argument("--dtype", choices=sorted(DTYPES), default="bf16")
     ap.add_argument("--task", default="needle",
                     help="'needle' (synthetic diagnostic), 'ruler:<variant>' "
@@ -682,9 +684,7 @@ def main():
     torch.manual_seed(args.seed)
 
     tok = AutoTokenizer.from_pretrained(args.model_id)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_id, dtype=DTYPES[args.dtype],
-        attn_implementation="eager", device_map={"": 0}).eval()
+    model = load_model(args.model_id, args.dtype, args.quant)
     device = next(model.parameters()).device
     assert device.type == "cuda"
     if "adakv" in args.policies:
@@ -710,6 +710,7 @@ def main():
         print("note: task has only %d samples; running %d" % (len(task), n_samples))
     decode_tokens = args.decode_tokens or task.max_gen
     identity = {"model_id": args.model_id, "dtype": args.dtype,
+                "quant": args.quant,
                 "task": args.task, "context": args.context,
                 "min_natural_tokens": args.min_natural_tokens,
                 "window": args.window, "prefill_chunk": args.prefill_chunk}

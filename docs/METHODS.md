@@ -124,6 +124,67 @@ Both of these are v5 implementation traps rather than method details, and both
 cost real time to find. They are recorded because a reproduction that hits either
 one gets plausible output rather than an error.
 
+## The MHA contrast arm is capped at 3K, not 12K
+
+Phi-3.5-mini is the MHA arm, and it cannot be run at the 4K-12K range originally
+planned. Under `transformers` 5.13 it degenerates for **any position beyond
+`original_max_position_embeddings` = 4096**, which is where its LongRoPE
+scaling switches from the short factor to the long one. The model warns at load
+that its `rope_parameters` config is being read in a way the library would rather
+express as a `factor` ratio, and the failure is consistent with that scaling
+being applied incorrectly.
+
+Measured with chunked prefill, 4-bit NF4, bf16 compute, RULER `niah_single_1`:
+
+| prompt tokens | retrieves the needle | output |
+|---|---|---|
+| 1020 | yes | coherent |
+| 2044 | yes | coherent |
+| 3068 | yes | coherent |
+| 4092 | no | `"The special magic number for.
+
+
+,
+
+.
+."` |
+| 6140 | no | newline and comma spam |
+
+The trigger is crossing the boundary, not the prompt length as such. At 3068
+prompt tokens the model retrieves the needle correctly and then collapses
+**mid-generation** once decoding pushes the position past 4096:
+
+    decode   64 -> total 3132, under 4096:   hit, "...5 students. The teacher brings in 3 more"
+    decode  512 -> total 3580, under 4096:   hit, "...to comply with the safety regulation."
+    decode 1100 -> total 4168, crosses 4096: hit, then "of of of of of of of of"
+
+Three things make this worth recording rather than working around quietly.
+
+**Logits stay finite throughout**, so the finiteness assert that catches the
+Qwen fp16 overflow does not catch this. Degenerate-but-finite output is a
+distinct failure class and needs the eyeball check the protocol already mandates.
+
+**It is not eviction and not the harness.** `model.generate` on an unevicted
+full cache fails identically, which is how it was isolated. A first Phi sweep
+produced a full-cache baseline of 0.000 across every budget; those numbers were
+discarded rather than reported, because a baseline that cannot do the task
+measures the pipeline, not the method.
+
+**It is not the quantisation.** NF4 with fp16 compute, NF4 with bf16 compute and
+NF4 with sdpa all answer a short prompt correctly and all fail the same way past
+4096.
+
+The arm therefore runs at 2048 context, with generation kept well clear of the
+boundary. `CLAUDE.md`'s 4K-12K range for this model is superseded.
+
+**A second lesson for the harness.** The first Phi run also used
+`--decode-tokens 24`, carried over from the Qwen runs. Phi restates the question
+before answering — "The special magic number for luxuriant-legitimacy mentioned
+in the provided text is..." — so 24 tokens truncated before the answer even at
+context lengths where the model works. Generation length is a per-model property,
+not a study constant; RULER specifies 128 for this task and the task default is
+used unless there is a reason to override it.
+
 ## Reading a scaling exponent
 
 Prefill cost is fitted as log(time) against log(context), and **the exponent
